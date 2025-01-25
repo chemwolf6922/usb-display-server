@@ -1,15 +1,16 @@
 #include "color_conversion.h"
+#include <math.h>
 
 /** ITU-R BT.709 conversion */
 
-void bgr_to_ycbcr(const bgr_pixel_t *src, ycbcr_pixel_t *dst)
+static void inline __attribute__((__always_inline__)) bgr_to_ycbcr(const bgr_pixel_t *src, ycbcr_pixel_t *dst)
 {
-    dst->y = (uint8_t)(0.2126 * src->r + 0.7152 * src->g + 0.0722 * src->b);
-    dst->cb = (int8_t)(-0.1146 * src->r - 0.3854 * src->g + 0.5000 * src->b);
-    dst->cr = (int8_t)(0.5000 * src->r - 0.4542 * src->g - 0.0458 * src->b);
+    dst->y = (uint8_t)roundf(0.2126f * src->r + 0.7152f * src->g + 0.0722f * src->b);
+    dst->cb = (int8_t)roundf(-0.1146f * src->r - 0.3854f * src->g + 0.5000f * src->b);
+    dst->cr = (int8_t)roundf(0.5000f * src->r - 0.4542f * src->g - 0.0458f * src->b);
 }
 
-void ycbcr_to_bgr(const ycbcr_pixel_t *src, bgr_pixel_t *dst)
+static void inline __attribute__((__always_inline__)) ycbcr_to_bgr(const ycbcr_pixel_t *src, bgr_pixel_t *dst)
 {
     dst->r = (uint8_t)(src->y + 1.5748 * src->cr);
     dst->g = (uint8_t)(src->y - 0.1873 * src->cb - 0.4681 * src->cr);

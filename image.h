@@ -41,6 +41,9 @@ typedef struct
     int color_space;
 } image_t;
 
+image_t* image_new(size_t width, size_t height);
+void free_image(image_t* image);
+
 #ifdef __cplusplus
 }
 #endif
