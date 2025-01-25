@@ -1,14 +1,10 @@
-
-#include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>
-#include <string.h>
 #include <unistd.h>
-#include "color_conversion.h"
-#include "k_means_compression.h"
+#include "../common/color_conversion.h"
+#include "../common/k_means_compression.h"
+#include "../common/bmp.h"
+#include "../common/image.h"
 #include "cpu_cycle_counter.h"
-#include "bmp.h"
-#include "image.h"
 
 int main(int argc, char const *argv[])
 {
@@ -17,7 +13,7 @@ int main(int argc, char const *argv[])
     {
         return 1;
     }
-    image_t* pic = load_24bit_bmp("./image/MountRainier24bit.bmp");
+    image_t* pic = load_24bit_bmp("../image/desktop.bmp");
     if (!pic)
     {
         return 1;
@@ -30,7 +26,7 @@ int main(int argc, char const *argv[])
     printf("cycles per iteration: %f\n", (double)cycles / iterations);
     printf("cycles per (pixel * iteration): %f\n", (double)cycles / (iterations * pic->width * pic->height));
     ycbcr_image_to_bgr(pic, pic);
-    dump_image_to_bmp("./output/MountRainier4bit.bmp", pic);
+    dump_image_to_bmp("../output/desktop.bmp", pic);
     free_image(pic);
     close(cpu_counter);
     return 0;
