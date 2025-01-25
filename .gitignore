@@ -1,0 +1,5 @@
+/output
+/.vscode
+/*.d
+/*.o
+/test
