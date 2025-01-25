@@ -4,6 +4,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+/**
+ * Performance considerations:
+ * Caching the distance is attempting. But since we are dealing with 160*80 pixels.
+ * The cache will be too large to be effective.
+ * 
+ */
+
 typedef struct
 {
     double y;
@@ -12,9 +19,9 @@ typedef struct
     size_t count;
 } center_t;
 
-#define ERROR_THRES_PER_PIXEL 0.01
+#define ERROR_THRES_PER_PIXEL 0.001
 
-static double pixel_center_distance(const ycbcr_pixel_t* a, const center_t* b);
+static int inline get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, double* distance);
 
 int k_means_compression(image_t* image, int k)
 {
@@ -25,14 +32,12 @@ int k_means_compression(image_t* image, int k)
     {
         return -1;
     }
-    memset(centers, 0, k * sizeof(center_t));
     int* cluster_index = (int*)malloc(image->width * image->height * sizeof(int));
     if (!cluster_index)
     {
         free(centers);
         return -1;
     }
-    memset(cluster_index, 0, image->width * image->height * sizeof(int));
     /** Initilize the centers with random pixels from the image */
     for (int i = 0; i < k; i++)
     {
@@ -50,23 +55,9 @@ int k_means_compression(image_t* image, int k)
         for (size_t i = 0; i < image->width * image->height; i++)
         {
             double min_distance = INFINITY;
-            for (int j = 0; j < k; j++)
-            {
-                double distance = pixel_center_distance(&image->pixels[i].ycbcr, &centers[j]);
-                if (distance < min_distance)
-                {
-                    min_distance = distance;
-                    cluster_index[i] = j;
-                }
-            }
+            cluster_index[i] = get_closest_center(&image->pixels[i].ycbcr, centers, k, &min_distance);
             error += min_distance;
         }
-
-        /** Debug */
-        printf("Error: %f\n", error);
-        printf("Delta: %f\n", error - last_error);
-        printf("Iteration %d\n", iteration++);
-
         /** Check for exit condition */
         if (fabs(last_error - error) < error_thres)
         {
@@ -86,18 +77,20 @@ int k_means_compression(image_t* image, int k)
         {
             if (centers[i].count != 0)
             {
-                centers[i].y = (centers[i].y / centers[i].count);
-                centers[i].cb = (centers[i].cb / centers[i].count);
-                centers[i].cr = (centers[i].cr / centers[i].count);
+                centers[i].y = centers[i].y / centers[i].count;
+                centers[i].cb = centers[i].cb / centers[i].count;
+                centers[i].cr = centers[i].cr / centers[i].count;
             }
         }
-
-        for(int i = 0; i < k; i++)
-        {
-            printf("Center %d: Y: %.2lf, Cb: %.2lf, Cr: %.2lf\n", i, centers[i].y, centers[i].cb, centers[i].cr);
-        }
+        iteration++;
     }
     /** Re paint the image with the new centers */
+    for (int i = 0; i < k; i++)
+    {
+        centers[i].y = round(centers[i].y);
+        centers[i].cb = round(centers[i].cb);
+        centers[i].cr = round(centers[i].cr);
+    }
     for (size_t i = 0; i < image->width * image->height; i++)
     {
         image->pixels[i].ycbcr.y = centers[cluster_index[i]].y;
@@ -106,12 +99,28 @@ int k_means_compression(image_t* image, int k)
     }
     free(cluster_index);
     free(centers);
-    return 0;
+    return iteration;
 }
 
-static double pixel_center_distance(const ycbcr_pixel_t* a, const center_t* b)
+static inline __attribute__((__always_inline__)) double pixel_center_distance(const ycbcr_pixel_t* a, const center_t* b)
 {
-    double distance = sqrt(pow((double)a->y - b->y, 2) + pow((double)a->cb - b->cb, 2) + pow((double)a->cr - b->cr, 2));
-    return distance;
+    return sqrt(pow((double)a->y - b->y, 2) + pow((double)a->cb - b->cb, 2) + pow((double)a->cr - b->cr, 2));
+}
+
+static inline int get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, double* p_min_distance)
+{
+    int index = -1;
+    double min_distance = INFINITY;
+    for (int i = 0; i < k; i++)
+    {
+        double distance = pixel_center_distance(pixel, &centers[i]);
+        if (distance < min_distance)
+        {
+            min_distance = distance;
+            index = i;
+        }
+    }
+    *p_min_distance = min_distance;
+    return index;
 }
 
