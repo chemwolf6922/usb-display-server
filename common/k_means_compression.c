@@ -27,19 +27,21 @@ typedef struct
 
 inline static int get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, float* distance);
 
-int k_means_compression(image_t* image, int k)
+int k_means_compression(const image_t* image, int k, color_palette_image_t* dst)
 {
+    if (!image || !dst || k <= 0)
+    {
+        return -1;
+    }
+    if (image->height != dst->height || image->width != dst->width || k != dst->k)
+    {
+        return -1;
+    }
     double last_error = INFINITY;
     double error_thres = ERROR_THRES_PER_PIXEL * image->width * image->height;
     center_t* centers = (center_t*)malloc(k * sizeof(center_t));
     if (!centers)
     {
-        return -1;
-    }
-    int* cluster_index = (int*)malloc(image->width * image->height * sizeof(int));
-    if (!cluster_index)
-    {
-        free(centers);
         return -1;
     }
     /** Initilize the centers with random pixels from the image */
@@ -60,7 +62,7 @@ int k_means_compression(image_t* image, int k)
         {
             /** Keep this loop simple to maximize vectorization */
             float min_distance = INFINITY;
-            cluster_index[i] = get_closest_center(&image->pixels[i].ycbcr, centers, k, &min_distance);
+            dst->pixel_indexs[i] = get_closest_center(&image->pixels[i].ycbcr, centers, k, &min_distance);
             error += min_distance;
         }
         /** Check for exit condition */
@@ -73,10 +75,10 @@ int k_means_compression(image_t* image, int k)
         memset(centers, 0, k * sizeof(center_t));
         for (size_t i = 0; i < image->width * image->height; i++)
         {
-            centers[cluster_index[i]].y_sum += image->pixels[i].ycbcr.y;
-            centers[cluster_index[i]].cb_sum += image->pixels[i].ycbcr.cb;
-            centers[cluster_index[i]].cr_sum += image->pixels[i].ycbcr.cr;
-            centers[cluster_index[i]].count++;
+            centers[dst->pixel_indexs[i]].y_sum += image->pixels[i].ycbcr.y;
+            centers[dst->pixel_indexs[i]].cb_sum += image->pixels[i].ycbcr.cb;
+            centers[dst->pixel_indexs[i]].cr_sum += image->pixels[i].ycbcr.cr;
+            centers[dst->pixel_indexs[i]].count++;
         }
         for (int i = 0; i < k; i++)
         {
@@ -92,17 +94,10 @@ int k_means_compression(image_t* image, int k)
     /** Re paint the image with the new centers */
     for (int i = 0; i < k; i++)
     {
-        centers[i].y = roundf(centers[i].y);
-        centers[i].cb = roundf(centers[i].cb);
-        centers[i].cr = roundf(centers[i].cr);
+        dst->color_palettes[i].ycbcr.y = roundf(centers[i].y);
+        dst->color_palettes[i].ycbcr.cb = roundf(centers[i].cb);
+        dst->color_palettes[i].ycbcr.cr = roundf(centers[i].cr);
     }
-    for (size_t i = 0; i < image->width * image->height; i++)
-    {
-        image->pixels[i].ycbcr.y = centers[cluster_index[i]].y;
-        image->pixels[i].ycbcr.cb = centers[cluster_index[i]].cb;
-        image->pixels[i].ycbcr.cr = centers[cluster_index[i]].cr;
-    }
-    free(cluster_index);
     free(centers);
     return iteration;
 }
@@ -128,5 +123,65 @@ inline static int get_closest_center(const ycbcr_pixel_t* pixel, const center_t*
     }
     *p_min_distance = min_distance;
     return index;
+}
+
+int paint_color_palette_image(const color_palette_image_t* src, image_t* dst)
+{
+    if (!src || !dst)
+    {
+        return -1;
+    }
+    if (src->height != dst->height || src->width != dst->width)
+    {
+        return -1;
+    }
+    for (size_t i = 0; i < dst->width * dst->height; i++)
+    {
+        int index = src->pixel_indexs[i];
+        if (index < 0 || index >= src->k)
+        {
+            return -1;
+        }
+        dst->pixels[i].ycbcr = src->color_palettes[index].ycbcr;
+    }
+    return 0;
+}
+
+color_palette_image_t* color_palette_image_new(int k, int width, int height)
+{
+    color_palette_image_t* image = malloc(sizeof(color_palette_image_t));
+    if (!image)
+    {
+        return NULL;
+    }
+    image->k = k;
+    image->width = width;
+    image->height = height;
+    image->color_palettes = malloc(k * sizeof(pixel_t));
+    if (!image->color_palettes)
+    {
+        free(image);
+        return NULL;
+    }
+    image->pixel_indexs = malloc(width * height * sizeof(uint32_t));
+    if (!image->pixel_indexs)
+    {
+        free(image->color_palettes);
+        free(image);
+        return NULL;
+    }
+    return image;
+}
+
+void color_palette_image_free(color_palette_image_t* image)
+{
+    if (image)
+    {
+        if (image->color_palettes)
+            free(image->color_palettes);
+        if (image->pixel_indexs)
+            free(image->pixel_indexs);
+        free(image);
+    }
 }
 
