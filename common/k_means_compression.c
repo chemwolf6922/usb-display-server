@@ -25,7 +25,7 @@ typedef struct
 
 #define ERROR_THRES_PER_PIXEL 0.001
 
-static int inline get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, float* distance);
+inline static int get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, float* distance);
 
 int k_means_compression(image_t* image, int k)
 {
@@ -107,13 +107,13 @@ int k_means_compression(image_t* image, int k)
     return iteration;
 }
 
-static inline __attribute__((__always_inline__)) float pixel_center_distance(const ycbcr_pixel_t* a, const center_t* b)
+inline __attribute__((__always_inline__)) static float pixel_center_distance(const ycbcr_pixel_t* a, const center_t* b)
 {
     /** Use float instead of double to increase vectorization */
     return sqrtf(powf((float)a->y - b->y, 2) + powf((float)a->cb - b->cb, 2) + powf((float)a->cr - b->cr, 2));
 }
 
-static inline int get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, float* p_min_distance)
+inline static int get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, float* p_min_distance)
 {
     int index = -1;
     float min_distance = INFINITY;
