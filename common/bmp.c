@@ -84,7 +84,7 @@ error:
     {
         fclose(file);
     }
-    free_image(image);
+    image_free(image);
     return NULL;
 }
 

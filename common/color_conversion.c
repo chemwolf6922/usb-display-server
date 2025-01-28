@@ -58,5 +58,50 @@ void ycbcr_image_to_bgr(const image_t* ycbcr, image_t* bgr)
             ycbcr_to_bgr(&ycbcr->pixels[i].ycbcr, &bgr->pixels[i].bgr);
         }
     }
-    bgr->color_space = COLOR_SPACE_bgr;
+    bgr->color_space = COLOR_SPACE_BGR;
 }
+
+void palette_bgr_to_ycbcr(const color_palette_image_t* src, color_palette_image_t* dst)
+{
+    if (src == dst)
+    {
+        /** same image, needs temp value */
+        ycbcr_pixel_t temp;
+        for (int i = 0; i < src->k; i++)
+        {
+            bgr_to_ycbcr(&src->color_palettes[i].bgr, &temp);
+            dst->color_palettes[i].ycbcr = temp;
+        }
+    }
+    else
+    {
+        for (int i = 0; i < src->k; i++)
+        {
+            bgr_to_ycbcr(&src->color_palettes[i].bgr, &dst->color_palettes[i].ycbcr);
+        }
+    }
+    dst->color_space = COLOR_SPACE_YCBCR;
+}
+
+void palette_ycbcr_to_bgr(const color_palette_image_t* src, color_palette_image_t* dst)
+{
+    if (src == dst)
+    {
+        /** same image, needs temp value */
+        bgr_pixel_t temp;
+        for (int i = 0; i < src->k; i++)
+        {
+            ycbcr_to_bgr(&src->color_palettes[i].ycbcr, &temp);
+            dst->color_palettes[i].bgr = temp;
+        }
+    }
+    else
+    {
+        for (int i = 0; i < src->k; i++)
+        {
+            ycbcr_to_bgr(&src->color_palettes[i].ycbcr, &dst->color_palettes[i].bgr);
+        }
+    }
+    dst->color_space = COLOR_SPACE_BGR;
+}
+
