@@ -33,7 +33,9 @@ target_link_libraries(test_compression m)
 add_executable(test_video
     test_video.c
     ../../common/bmp.c
-    ../../common/image.c)
+    ../../common/image.c
+    ../../common/color_conversion.c
+    ../../common/k_means_compression.c)
 
 target_link_libraries(test_video
     avcodec
