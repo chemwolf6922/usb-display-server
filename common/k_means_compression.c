@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 /**
  * Performance considerations:
@@ -27,7 +28,7 @@ typedef struct
 
 inline static int get_closest_center(const ycbcr_pixel_t* pixel, const center_t* centers, int k, float* distance);
 
-int k_means_compression(const image_t* image, int k, color_palette_image_t* dst)
+int k_means_compression(const image_t* image, int k, color_palette_image_t* dst, bool use_dst_as_hint)
 {
     if (!image || !dst || k <= 0)
     {
@@ -44,14 +45,27 @@ int k_means_compression(const image_t* image, int k, color_palette_image_t* dst)
     {
         return -1;
     }
-    /** Initilize the centers with random pixels from the image */
-    for (int i = 0; i < k; i++)
+    if (use_dst_as_hint)
     {
-        size_t index = rand() % (image->width * image->height);
-        pixel_t* pixel = &image->pixels[index];
-        centers[i].y = pixel->ycbcr.y;
-        centers[i].cb = pixel->ycbcr.cb;
-        centers[i].cr = pixel->ycbcr.cr;
+        /** Use dst as hint to stabilize the frames */
+        for (int i = 0; i < k; i++)
+        {
+            centers[i].y = dst->color_palettes[i].ycbcr.y;
+            centers[i].cb = dst->color_palettes[i].ycbcr.cb;
+            centers[i].cr = dst->color_palettes[i].ycbcr.cr;
+        }
+    }
+    else
+    {
+        /** Initilize the centers with random pixels from the image */
+        for (int i = 0; i < k; i++)
+        {
+            size_t index = rand() % (image->width * image->height);
+            pixel_t* pixel = &image->pixels[index];
+            centers[i].y = pixel->ycbcr.y;
+            centers[i].cb = pixel->ycbcr.cb;
+            centers[i].cr = pixel->ycbcr.cr;
+        }
     }
     int iteration = 0;
     for(;;)
@@ -87,6 +101,17 @@ int k_means_compression(const image_t* image, int k, color_palette_image_t* dst)
                 centers[i].y = centers[i].y_sum / centers[i].count;
                 centers[i].cb = centers[i].cb_sum / centers[i].count;
                 centers[i].cr = centers[i].cr_sum / centers[i].count;
+            }
+            else
+            {
+                /** 
+                 * Re initialize the empty center with a random point from the dataset.
+                 * Ideally we should use the farthest point from the center of the largest group. 
+                 */
+                pixel_t random_pixel = image->pixels[rand()%(image->width * image->height)];
+                centers[i].y = random_pixel.ycbcr.y;
+                centers[i].cb = random_pixel.ycbcr.cb;
+                centers[i].cr = random_pixel.ycbcr.cr;
             }
         }
         iteration++;

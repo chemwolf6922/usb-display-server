@@ -17,47 +17,59 @@ int main(int argc, char const *argv[])
     seed_random();
 
     int cpu_counter = cpu_cycle_counter_open();
-    image_t* pic = load_24bit_bmp("../../image/desktop.bmp");
-    if (!pic)
+    image_t* original = load_24bit_bmp("../../image/desktop.bmp");
+    if (!original)
     {
         return 1;
     }
-    color_palette_image_t* dst = color_palette_image_new(COLOR_PALETTE_SIZE, pic->width, pic->height);
+    image_t* dst = image_new(original->width, original->height);
     if (!dst)
     {
         return 1;
     }
-    bgr_image_to_ycbcr(pic, pic);
+    color_palette_image_t* compressed = color_palette_image_new(COLOR_PALETTE_SIZE, original->width, original->height);
+    if (!compressed)
+    {
+        return 1;
+    }
+    bgr_image_to_ycbcr(original, original);
+
     if (cpu_counter >= 0)
     {
         cpu_cycle_counter_reset(cpu_counter);
     }
-    int iterations = k_means_compression(pic, COLOR_PALETTE_SIZE, dst);
+    int iterations = k_means_compression(original, COLOR_PALETTE_SIZE, compressed, false);
     if (cpu_counter >= 0)
     {
         long long cycles = cpu_cycle_counter_get_result(cpu_counter);
         printf("K-means compression took %d iterations and %lld cycles\n", iterations, cycles);
         printf("cycles per iteration: %f\n", (double)cycles / iterations);
-        printf("cycles per (pixel * iteration): %f\n", (double)cycles / (iterations * pic->width * pic->height));
+        printf("cycles per (pixel * iteration): %f\n", (double)cycles / (iterations * original->width * original->height));
     }
-    paint_color_palette_image(dst, pic);
-    packed_color_palette_image_t* packed_image = packed_color_palette_image_new(COLOR_PALETTE_SIZE, pic->width, pic->height);
+    paint_color_palette_image(compressed, dst);
+    ycbcr_image_to_bgr(dst, dst);
+    dump_image_to_bmp("../../output/desktop.bmp", dst);
+
+    /** compress again with compressed as hint. */
+    k_means_compression(original, COLOR_PALETTE_SIZE, compressed, true);
+    paint_color_palette_image(compressed, dst);
+    ycbcr_image_to_bgr(dst, dst);
+    dump_image_to_bmp("../../output/desktop2.bmp", dst);
+
+    /** pack compressed image */
+    palette_ycbcr_to_bgr(compressed, compressed);
+    packed_color_palette_image_t* packed_image = packed_color_palette_image_new(COLOR_PALETTE_SIZE, dst->width, dst->height);
     if (!packed_image)
     {
         return 1;
     }
-    palette_ycbcr_to_bgr(dst, dst);
-    for (int i = 0; i < dst->k; i++)
-    {
-        printf("Color %d: R: %d, G: %d, B: %d\n", i, dst->color_palettes[i].bgr.r, dst->color_palettes[i].bgr.g, dst->color_palettes[i].bgr.b);
-    }
-    pack_color_palette_image(dst, packed_image);
-    color_palette_image_free(dst);
+    pack_color_palette_image(compressed, packed_image);
     save_data_to_file("../../output/desktop.packed", packed_image->data, packed_image->size);
     packed_color_palette_image_free(packed_image);
-    ycbcr_image_to_bgr(pic, pic);
-    dump_image_to_bmp("../../output/desktop.bmp", pic);
-    image_free(pic);
+
+    color_palette_image_free(compressed);
+    image_free(dst);
+    image_free(original);
     close(cpu_counter);
     return 0;
 }
