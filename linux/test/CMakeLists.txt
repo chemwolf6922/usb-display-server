@@ -9,13 +9,16 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_compile_options(
-    -march=native
     -Wall
     -Wextra
     -Werror
     -Wno-unused-parameter
     -Wno-unused-variable
     -Wno-unused-function)
+
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(-march=native)
+endif()
 
 add_executable(test_compression
     test_compression.c
@@ -26,3 +29,15 @@ add_executable(test_compression
     ../../common/k_means_compression.c)
 
 target_link_libraries(test_compression m)
+
+add_executable(test_video
+    test_video.c
+    ../../common/bmp.c
+    ../../common/image.c)
+
+target_link_libraries(test_video
+    avcodec
+    avformat
+    avutil
+    swscale
+    m)

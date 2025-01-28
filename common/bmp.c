@@ -68,7 +68,7 @@ image_t* load_24bit_bmp(const char* filename)
     size_t padding = row_size - image->width * 3;
     size_t offset = bmp_header.offset;
     fseek(file, offset, SEEK_SET);
-    for (size_t y = 0; y < image->height; y++)
+    for (int y = (int)image->height - 1; y >= 0; y--)
     {
         if (fread(&image->pixels[y * image->width], 1, image->width * sizeof(pixel_t), file) != image->width * sizeof(pixel_t))
         {
@@ -112,7 +112,7 @@ void dump_image_to_bmp(const char* filename, const image_t* image)
     dib_header.size_image = row_size * image->height;
     fwrite(&dib_header, 1, sizeof(dib_header_t), file);
     size_t padding = row_size - image->width * 3;
-    for (size_t y = 0; y < image->height; y++)
+    for (int y = (int)image->height - 1; y >= 0; y--)
     {
         fwrite(&image->pixels[y * image->width], 1, image->width * sizeof(pixel_t), file);
         /** Max padding size is 4 */
