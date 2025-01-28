@@ -13,7 +13,7 @@
 
 #define INPUT_FILE "../../resource/bbb_sunflower_180p_30fps_2min.mp4"
 #define OUTPUT_DIR "../../output/bbb_sunflower_compressed_frames/"
-#define N_COLOR 16
+#define N_COLOR 64
 
 static int frame_to_image_rgb(const AVFrame* src, image_t* dst);
 
@@ -93,7 +93,7 @@ int main(int argc, char const *argv[])
                     CHECK_EXPR(rc == 0, "Failed to convert frame to image");
 
                     bgr_image_to_ycbcr(image, image);
-                    int iterations = k_means_compression(image, 16, compressed_image, n_frame != 0);
+                    int iterations = k_means_compression(image, N_COLOR, compressed_image, n_frame != 0);
                     CHECK_EXPR(iterations >= 0, "Failed to compress image");
                     paint_color_palette_image(compressed_image, image);
                     ycbcr_image_to_bgr(image, image);
