@@ -17,7 +17,7 @@ int main(int argc, char const *argv[])
     seed_random();
 
     int cpu_counter = cpu_cycle_counter_open();
-    image_t* original = load_24bit_bmp("../../image/desktop.bmp");
+    image_t* original = load_24bit_bmp("../../resource/desktop.bmp");
     if (!original)
     {
         return 1;
