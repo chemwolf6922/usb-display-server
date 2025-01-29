@@ -34,8 +34,8 @@ typedef struct
 #define BMP_24BIT_SIZE(width, height) (sizeof(bmp_header_t) + sizeof(dib_header_t) + BMP_24BIT_ROW_SIZE(width) * (height))
 
 image_t* load_24bit_bmp(const char* filename);
-int load_24bit_bmp_from_ram(const uint8_t* data, size_t size, image_t* image);
 void dump_image_to_bmp(const char* filename, const image_t* image);
+
 
 #ifdef __cplusplus
 }

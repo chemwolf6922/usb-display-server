@@ -1,14 +1,14 @@
 #pragma once
 
-#include "../../common/bmp.h"
+#include "../../common/image.h"
 
 /** These values should sync with the MCU firmware */
 #define CONST_SCREEN_WIDTH (160)
 #define CONST_SCREEN_HEIGHT (80)
-#define CONST_N_COLOR (64)
-#define INPUT_BMP_SIZE BMP_24BIT_SIZE(CONST_SCREEN_WIDTH, CONST_SCREEN_HEIGHT)
+#define CONST_N_COLOR (16)
+#define CONST_FB_SIZE (CONST_SCREEN_WIDTH * CONST_SCREEN_HEIGHT * sizeof(pixel_t))
 
 /** These are default values */
-#define DEFAULT_PIPE_PATH "/tmp/usb-screen-server"
-/** DO NOT set this too high */
-#define DEFAULT_FRAME_MIN_INTERVAL (1000 / 30)
+#define DEFAULT_SOCK_PATH "@usb-screen-server"
+/** DO NOT set this too high. Set this to < 33 to better support  30fps video */
+#define DEFAULT_FRAME_MIN_INTERVAL (30)
