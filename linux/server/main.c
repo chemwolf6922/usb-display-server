@@ -251,8 +251,6 @@ static void on_client_data(void* ctx)
     }
 }
 
-static int n_frame = 0;
-
 static void process_frame(void* )
 {
     if (app.frame_sync != NULL)
@@ -274,13 +272,9 @@ static void process_frame(void* )
     memcpy(color_palette, app.compressed_image->color_palettes, sizeof(color_palette));
     palette_ycbcr_to_bgr(app.compressed_image, app.compressed_image);
     pack_color_palette_image(app.compressed_image, app.packed_image);
+    memcpy(app.compressed_image->color_palettes, color_palette, sizeof(color_palette));
     /** DO not care if this fails */
     app.screen->write(app.screen, app.packed_image->data, app.packed_image->size);
-    
-    paint_color_palette_image(app.compressed_image, app.image);
-    ycbcr_image_to_bgr(app.image, app.image);
-
-    memcpy(app.compressed_image->color_palettes, color_palette, sizeof(color_palette));
     app.first_frame = false;
 }
 
