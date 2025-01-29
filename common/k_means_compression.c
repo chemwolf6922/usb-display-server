@@ -166,6 +166,153 @@ inline static int get_closest_center(const ycbcr_pixel_t* pixel, const center_t*
     return index;
 }
 
+#ifdef __AVX512F__
+static int k_means_compression_fast16(const image_t* image, color_palette_image_t* dst, bool use_dst_as_hint)
+{
+    /**
+     * Speed up k-means with AVX512. (k == 16 version)
+     */
+    if (!image || !dst)
+    {
+        return -1;
+    }
+    if (image->height != dst->height || image->width != dst->width || dst->k != 16)
+    {
+        return -1;
+    }
+
+    double last_error = INFINITY;
+    double error_thres = ERROR_THRES_PER_PIXEL * image->width * image->height;
+    center_t* centers = (center_t*)malloc(16 * sizeof(center_t));
+    if (!centers)
+    {
+        return -1;
+    }
+    if (use_dst_as_hint)
+    {
+        /** Use dst as hint to stabilize the frames */
+        for (int i = 0; i < 16; i++)
+        {
+            centers[i].y = dst->color_palettes[i].ycbcr.y;
+            centers[i].cb = dst->color_palettes[i].ycbcr.cb;
+            centers[i].cr = dst->color_palettes[i].ycbcr.cr;
+        }
+    }
+    else
+    {
+        /** Initilize the centers with random pixels from the image */
+        for (int i = 0; i < 16; i++)
+        {
+            size_t index = rand() % (image->width * image->height);
+            pixel_t* pixel = &image->pixels[index];
+            centers[i].y = pixel->ycbcr.y;
+            centers[i].cb = pixel->ycbcr.cb;
+            centers[i].cr = pixel->ycbcr.cr;
+        }
+    }
+
+    int iteration = 0;
+    for(;;)
+    {
+        double error = 0;
+        /** clear center sum and counters */
+        for (int i = 0; i < 16; i++)
+        {
+            centers[i].y_sum = 0;
+            centers[i].cb_sum = 0;
+            centers[i].cr_sum = 0;
+            centers[i].count = 0;
+        }
+
+        /** prepare center vectors */
+        
+        __m512 y_c = _mm512_set_ps(
+            centers[15].y, centers[14].y, centers[13].y, centers[12].y,
+            centers[11].y, centers[10].y, centers[9].y, centers[8].y,
+            centers[7].y, centers[6].y, centers[5].y, centers[4].y,
+            centers[3].y, centers[2].y, centers[1].y, centers[0].y);
+        __m512 cb_c = _mm512_set_ps(
+            centers[15].cb, centers[14].cb, centers[13].cb, centers[12].cb,
+            centers[11].cb, centers[10].cb, centers[9].cb, centers[8].cb,
+            centers[7].cb, centers[6].cb, centers[5].cb, centers[4].cb,
+            centers[3].cb, centers[2].cb, centers[1].cb, centers[0].cb);
+        __m512 cr_c = _mm512_set_ps(
+            centers[15].cr, centers[14].cr, centers[13].cr, centers[12].cr,
+            centers[11].cr, centers[10].cr, centers[9].cr, centers[8].cr,
+            centers[7].cr, centers[6].cr, centers[5].cr, centers[4].cr,
+            centers[3].cr, centers[2].cr, centers[1].cr, centers[0].cr);
+
+        /** Calculate the cluster index and error for each pixel */
+        for (size_t i = 0; i < image->width * image->height; i++)
+        {
+            __m512 y = _mm512_set1_ps(image->pixels[i].ycbcr.y);
+            __m512 cb = _mm512_set1_ps(image->pixels[i].ycbcr.cb);
+            __m512 cr = _mm512_set1_ps(image->pixels[i].ycbcr.cr);
+
+            __m512 y_diff = _mm512_sub_ps(y_c, y);
+            y_diff = _mm512_mul_ps(y_diff, y_diff);
+            __m512 cb_diff = _mm512_sub_ps(cb_c, cb);
+            cb_diff = _mm512_mul_ps(cb_diff, cb_diff);
+            __m512 cr_diff = _mm512_sub_ps(cr_c, cr);
+            cr_diff = _mm512_mul_ps(cr_diff, cr_diff);
+            __m512 distance = _mm512_add_ps(y_diff, cb_diff);
+            distance = _mm512_add_ps(distance, cr_diff);
+            /** We can calculate the sqrt after we found the minimum value */
+
+            /** Find the minimum value and index in distance_lo and distance_hi */
+            float min_distance = _mm512_reduce_min_ps(distance);
+            int mask = _mm512_cmpeq_ps_mask(distance, _mm512_set1_ps(min_distance));
+            int index = 31 - __builtin_clz(mask);
+
+            dst->pixel_indexs[i] = index;
+            error += sqrtf(min_distance);
+
+            centers[index].y_sum += image->pixels[i].ycbcr.y;
+            centers[index].cb_sum += image->pixels[i].ycbcr.cb;
+            centers[index].cr_sum += image->pixels[i].ycbcr.cr;
+            centers[index].count++;
+        }
+        /** Check for exit condition */
+        if (fabs(last_error - error) < error_thres)
+        {
+            break;
+        }
+        last_error = error;
+
+        /** Calculate the new centers */
+        for (int i = 0; i < 16; i++)
+        {
+            if (centers[i].count != 0)
+            {
+                centers[i].y = centers[i].y_sum / centers[i].count;
+                centers[i].cb = centers[i].cb_sum / centers[i].count;
+                centers[i].cr = centers[i].cr_sum / centers[i].count;
+            }
+            else
+            {
+                /** 
+                 * Re initialize the empty center with a random point from the dataset.
+                 * Ideally we should use the farthest point from the center of the largest group. 
+                 */
+                pixel_t random_pixel = image->pixels[rand()%(image->width * image->height)];
+                centers[i].y = random_pixel.ycbcr.y;
+                centers[i].cb = random_pixel.ycbcr.cb;
+                centers[i].cr = random_pixel.ycbcr.cr;
+            }
+        }
+        iteration++;
+    }
+    /** Re paint the image with the new centers */
+    for (int i = 0; i < 16; i++)
+    {
+        dst->color_palettes[i].ycbcr.y = roundf(centers[i].y);
+        dst->color_palettes[i].ycbcr.cb = roundf(centers[i].cb);
+        dst->color_palettes[i].ycbcr.cr = roundf(centers[i].cr);
+    }
+    free(centers);
+    return iteration;
+}
+#else
 #ifdef __AVX2__
 static int k_means_compression_fast16(const image_t* image, color_palette_image_t* dst, bool use_dst_as_hint)
 {
@@ -346,4 +493,7 @@ static int k_means_compression_fast16(const image_t* image, color_palette_image_
     free(centers);
     return iteration;
 }
-#endif
+#endif // __AVX2__
+#endif // __AVX512F__
+
+
