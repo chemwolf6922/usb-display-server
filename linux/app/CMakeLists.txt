@@ -34,3 +34,17 @@ target_link_libraries(usb-display-play-video
     swscale
     m)
 
+add_executable(usb-display-show-image
+    usb_screen_show_image.c
+    ../../common/bmp.c
+    ../../common/color_conversion.c
+    ../../common/image.c
+    ../../common/k_means_compression.c)
+
+target_link_libraries(usb-display-show-image
+    avcodec
+    avformat
+    avutil
+    swscale
+    m)
+
