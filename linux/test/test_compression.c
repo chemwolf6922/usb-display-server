@@ -32,7 +32,18 @@ int main(int argc, char const *argv[])
     {
         return 1;
     }
+
+    if (cpu_counter >= 0)
+    {
+        cpu_cycle_counter_reset(cpu_counter);
+    }
     bgr_image_to_ycbcr(original, original);
+    if (cpu_counter >= 0)
+    {
+        long long cycles = cpu_cycle_counter_get_result(cpu_counter);
+        printf("Color conversion took %lld cycles\n", cycles);
+        printf("cycles per pixel: %f\n\n", (double)cycles/(original->width * original->height));
+    }
 
     if (cpu_counter >= 0)
     {
@@ -46,6 +57,7 @@ int main(int argc, char const *argv[])
         printf("cycles per iteration: %f\n", (double)cycles / iterations);
         printf("cycles per (pixel * iteration): %f\n", (double)cycles / (iterations * original->width * original->height));
     }
+
     paint_color_palette_image(compressed, dst);
     ycbcr_image_to_bgr(dst, dst);
     dump_image_to_bmp("../../output/desktop.bmp", dst);
