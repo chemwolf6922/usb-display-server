@@ -5,7 +5,7 @@
 /** These values should sync with the MCU firmware */
 #define CONST_SCREEN_WIDTH (160)
 #define CONST_SCREEN_HEIGHT (80)
-#define CONST_N_COLOR (16)
+#define CONST_N_COLOR (32)
 #define CONST_FB_SIZE (CONST_SCREEN_WIDTH * CONST_SCREEN_HEIGHT * sizeof(pixel_t))
 
 /** These are default values */

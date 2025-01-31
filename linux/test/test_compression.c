@@ -7,7 +7,7 @@
 #include "../../common/image.h"
 #include "cpu_cycle_counter.h"
 
-#define COLOR_PALETTE_SIZE 16
+#define COLOR_PALETTE_SIZE 32
 
 static int seed_random();
 static int save_data_to_file(const char* filename, const void* data, size_t size);

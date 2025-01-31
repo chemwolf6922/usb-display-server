@@ -33,6 +33,7 @@ typedef struct
 inline static double update_clusters(int k, center_t* centers, const image_t* image, color_palette_image_t* dst);
 #ifdef __AVX2__
 inline static double update_clusters_fast16(center_t* centers, const image_t* image, color_palette_image_t* dst);
+inline static double update_clusters_fast32(center_t* centers, const image_t* image, color_palette_image_t* dst);
 #endif
 
 int k_means_compression(const image_t* image, int k, color_palette_image_t* dst, bool use_dst_as_hint)
@@ -89,7 +90,11 @@ int k_means_compression(const image_t* image, int k, color_palette_image_t* dst,
 
         double error = INFINITY;
 #ifdef __AVX2__
-        if (k == 16)
+        if (k == 32)
+        {
+            error = update_clusters_fast32(centers, image, dst);
+        }
+        else if (k == 16)
         {
             error = update_clusters_fast16(centers, image, dst);
         }
@@ -177,6 +182,7 @@ inline static double update_clusters(int k, center_t* centers, const image_t* im
 }
 
 #if defined(__AVX512F__)
+
 inline static double update_clusters_fast16(center_t* centers, const image_t* image, color_palette_image_t* dst)
 {
     double error = 0;
@@ -229,7 +235,96 @@ inline static double update_clusters_fast16(center_t* centers, const image_t* im
     }
     return error;
 }
+
+inline static double update_clusters_fast32(center_t* centers, const image_t* image, color_palette_image_t* dst)
+{
+    double error = 0;
+    /** prepare center vectors */
+    __m512 y_c0 = _mm512_set_ps(
+        centers[15].y, centers[14].y, centers[13].y, centers[12].y,
+        centers[11].y, centers[10].y, centers[9].y, centers[8].y,
+        centers[7].y, centers[6].y, centers[5].y, centers[4].y,
+        centers[3].y, centers[2].y, centers[1].y, centers[0].y);
+    __m512 y_c1 = _mm512_set_ps(
+        centers[31].y, centers[30].y, centers[29].y, centers[28].y,
+        centers[27].y, centers[26].y, centers[25].y, centers[24].y,
+        centers[23].y, centers[22].y, centers[21].y, centers[20].y,
+        centers[19].y, centers[18].y, centers[17].y, centers[16].y);
+    __m512 cb_c0 = _mm512_set_ps(
+        centers[15].cb, centers[14].cb, centers[13].cb, centers[12].cb,
+        centers[11].cb, centers[10].cb, centers[9].cb, centers[8].cb,
+        centers[7].cb, centers[6].cb, centers[5].cb, centers[4].cb,
+        centers[3].cb, centers[2].cb, centers[1].cb, centers[0].cb);
+    __m512 cb_c1 = _mm512_set_ps(
+        centers[31].cb, centers[30].cb, centers[29].cb, centers[28].cb,
+        centers[27].cb, centers[26].cb, centers[25].cb, centers[24].cb,
+        centers[23].cb, centers[22].cb, centers[21].cb, centers[20].cb,
+        centers[19].cb, centers[18].cb, centers[17].cb, centers[16].cb);
+    __m512 cr_c0 = _mm512_set_ps(
+        centers[15].cr, centers[14].cr, centers[13].cr, centers[12].cr,
+        centers[11].cr, centers[10].cr, centers[9].cr, centers[8].cr,
+        centers[7].cr, centers[6].cr, centers[5].cr, centers[4].cr,
+        centers[3].cr, centers[2].cr, centers[1].cr, centers[0].cr);
+    __m512 cr_c1 = _mm512_set_ps(
+        centers[31].cr, centers[30].cr, centers[29].cr, centers[28].cr,
+        centers[27].cr, centers[26].cr, centers[25].cr, centers[24].cr,
+        centers[23].cr, centers[22].cr, centers[21].cr, centers[20].cr,
+        centers[19].cr, centers[18].cr, centers[17].cr, centers[16].cr);
+
+    /** Calculate the cluster index and error for each pixel */
+    for (size_t i = 0; i < image->width * image->height; i++)
+    {
+        __m512 y = _mm512_set1_ps(image->pixels[i].ycbcr.y);
+        __m512 cb = _mm512_set1_ps(image->pixels[i].ycbcr.cb);
+        __m512 cr = _mm512_set1_ps(image->pixels[i].ycbcr.cr);
+
+        __m512 y_diff = _mm512_sub_ps(y_c0, y);
+        y_diff = _mm512_mul_ps(y_diff, y_diff);
+        __m512 cb_diff = _mm512_sub_ps(cb_c0, cb);
+        cb_diff = _mm512_mul_ps(cb_diff, cb_diff);
+        __m512 cr_diff = _mm512_sub_ps(cr_c0, cr);
+        cr_diff = _mm512_mul_ps(cr_diff, cr_diff);
+        __m512 distance_0 = _mm512_add_ps(y_diff, cb_diff);
+        distance_0 = _mm512_add_ps(distance_0, cr_diff);
+        /** We can calculate the sqrt after we found the minimum value */
+
+        y_diff = _mm512_sub_ps(y_c1, y);
+        y_diff = _mm512_mul_ps(y_diff, y_diff);
+        cb_diff = _mm512_sub_ps(cb_c1, cb);
+        cb_diff = _mm512_mul_ps(cb_diff, cb_diff);
+        cr_diff = _mm512_sub_ps(cr_c1, cr);
+        cr_diff = _mm512_mul_ps(cr_diff, cr_diff);
+        __m512 distance_1 = _mm512_add_ps(y_diff, cb_diff);
+        distance_1 = _mm512_add_ps(distance_1, cr_diff);
+
+        /** Find the minimum value and index in distance_lo and distance_hi */
+        __m512 distance = _mm512_min_ps(distance_0, distance_1);
+        float min_distance = _mm512_reduce_min_ps(distance);
+        int mask = _mm512_cmpeq_ps_mask(distance_1, _mm512_set1_ps(min_distance));
+        int index;
+        if (mask)
+        {
+            index = 16 + 31 - __builtin_clz(mask);
+        }
+        else
+        {
+            mask = _mm512_cmpeq_ps_mask(distance_0, _mm512_set1_ps(min_distance));
+            index = 31 - __builtin_clz(mask);
+        }
+
+        dst->pixel_indexs[i] = index;
+        error += sqrtf(min_distance);
+
+        centers[index].y_sum += image->pixels[i].ycbcr.y;
+        centers[index].cb_sum += image->pixels[i].ycbcr.cb;
+        centers[index].cr_sum += image->pixels[i].ycbcr.cr;
+        centers[index].count++;
+    }
+    return error;
+}
+
 #elif defined(__AVX2__)
+
 inline static double update_clusters_fast16(center_t* centers, const image_t* image, color_palette_image_t* dst)
 {
     double error = 0;
@@ -326,6 +421,160 @@ inline static double update_clusters_fast16(center_t* centers, const image_t* im
     }
     return error;
 }
+
+inline static double update_clusters_fast32(center_t* centers, const image_t* image, color_palette_image_t* dst)
+{
+    double error = 0;
+    /** clear center sum and counters */
+    for (int i = 0; i < 32; i++)
+    {
+        centers[i].y_sum = 0;
+        centers[i].cb_sum = 0;
+        centers[i].cr_sum = 0;
+        centers[i].count = 0;
+    }
+
+    /** prepare center vectors */
+    
+    __m256 y_0 = _mm256_set_ps(
+        centers[7].y, centers[6].y, centers[5].y, centers[4].y,
+        centers[3].y, centers[2].y, centers[1].y, centers[0].y);
+    __m256 y_1 = _mm256_set_ps(
+        centers[15].y, centers[14].y, centers[13].y, centers[12].y,
+        centers[11].y, centers[10].y, centers[9].y, centers[8].y);
+    __m256 y_2 = _mm256_set_ps(
+        centers[23].y, centers[22].y, centers[21].y, centers[20].y,
+        centers[19].y, centers[18].y, centers[17].y, centers[16].y);
+    __m256 y_3 = _mm256_set_ps(
+        centers[31].y, centers[30].y, centers[29].y, centers[28].y,
+        centers[27].y, centers[26].y, centers[25].y, centers[24].y);
+    __m256 cb_0 = _mm256_set_ps(
+        centers[7].cb, centers[6].cb, centers[5].cb, centers[4].cb,
+        centers[3].cb, centers[2].cb, centers[1].cb, centers[0].cb);
+    __m256 cb_1 = _mm256_set_ps(
+        centers[15].cb, centers[14].cb, centers[13].cb, centers[12].cb,
+        centers[11].cb, centers[10].cb, centers[9].cb, centers[8].cb);
+    __m256 cb_2 = _mm256_set_ps(
+        centers[23].cb, centers[22].cb, centers[21].cb, centers[20].cb,
+        centers[19].cb, centers[18].cb, centers[17].cb, centers[16].cb);
+    __m256 cb_3 = _mm256_set_ps(
+        centers[31].cb, centers[30].cb, centers[29].cb, centers[28].cb,
+        centers[27].cb, centers[26].cb, centers[25].cb, centers[24].cb);
+    __m256 cr_0 = _mm256_set_ps(
+        centers[7].cr, centers[6].cr, centers[5].cr, centers[4].cr,
+        centers[3].cr, centers[2].cr, centers[1].cr, centers[0].cr);
+    __m256 cr_1 = _mm256_set_ps(
+        centers[15].cr, centers[14].cr, centers[13].cr, centers[12].cr,
+        centers[11].cr, centers[10].cr, centers[9].cr, centers[8].cr);
+    __m256 cr_2 = _mm256_set_ps(
+        centers[23].cr, centers[22].cr, centers[21].cr, centers[20].cr,
+        centers[19].cr, centers[18].cr, centers[17].cr, centers[16].cr);
+    __m256 cr_3 = _mm256_set_ps(
+        centers[31].cr, centers[30].cr, centers[29].cr, centers[28].cr,
+        centers[27].cr, centers[26].cr, centers[25].cr, centers[24].cr);
+
+    /** Calculate the cluster index and error for each pixel */
+    for (size_t i = 0; i < image->width * image->height; i++)
+    {
+        __m256 y = _mm256_set1_ps(image->pixels[i].ycbcr.y);
+        __m256 cb = _mm256_set1_ps(image->pixels[i].ycbcr.cb);
+        __m256 cr = _mm256_set1_ps(image->pixels[i].ycbcr.cr);
+
+        __m256 y_diff = _mm256_sub_ps(y_0, y);
+        y_diff = _mm256_mul_ps(y_diff, y_diff);
+        __m256 cb_diff = _mm256_sub_ps(cb_0, cb);
+        cb_diff = _mm256_mul_ps(cb_diff, cb_diff);
+        __m256 cr_diff = _mm256_sub_ps(cr_0, cr);
+        cr_diff = _mm256_mul_ps(cr_diff, cr_diff);
+        __m256 distance_0 = _mm256_add_ps(y_diff, cb_diff);
+        distance_0 = _mm256_add_ps(distance_0, cr_diff);
+        /** We can calculate the sqrt after we found the minimum value */
+
+        y_diff = _mm256_sub_ps(y_1, y);
+        y_diff = _mm256_mul_ps(y_diff, y_diff);
+        cb_diff = _mm256_sub_ps(cb_1, cb);
+        cb_diff = _mm256_mul_ps(cb_diff, cb_diff);
+        cr_diff = _mm256_sub_ps(cr_1, cr);
+        cr_diff = _mm256_mul_ps(cr_diff, cr_diff);
+        __m256 distance_1 = _mm256_add_ps(y_diff, cb_diff);
+        distance_1 = _mm256_add_ps(distance_1, cr_diff);
+
+        y_diff = _mm256_sub_ps(y_2, y);
+        y_diff = _mm256_mul_ps(y_diff, y_diff);
+        cb_diff = _mm256_sub_ps(cb_2, cb);
+        cb_diff = _mm256_mul_ps(cb_diff, cb_diff);
+        cr_diff = _mm256_sub_ps(cr_2, cr);
+        cr_diff = _mm256_mul_ps(cr_diff, cr_diff);
+        __m256 distance_2 = _mm256_add_ps(y_diff, cb_diff);
+        distance_2 = _mm256_add_ps(distance_2, cr_diff);
+
+        y_diff = _mm256_sub_ps(y_3, y);
+        y_diff = _mm256_mul_ps(y_diff, y_diff);
+        cb_diff = _mm256_sub_ps(cb_3, cb);
+        cb_diff = _mm256_mul_ps(cb_diff, cb_diff);
+        cr_diff = _mm256_sub_ps(cr_3, cr);
+        cr_diff = _mm256_mul_ps(cr_diff, cr_diff);
+        __m256 distance_3 = _mm256_add_ps(y_diff, cb_diff);
+        distance_3 = _mm256_add_ps(distance_3, cr_diff);
+
+        /** Find the minimum value and index in distance_lo and distance_hi */
+        __m256 distance = _mm256_min_ps(distance_0, distance_1);
+        distance = _mm256_min_ps(distance, distance_2);
+        distance = _mm256_min_ps(distance, distance_3);
+        __m256 distance_fold = _mm256_permute2f128_ps(distance, distance, 1);
+        distance = _mm256_min_ps(distance, distance_fold);
+        distance_fold = _mm256_permute_ps(distance, 0b01001110);
+        distance = _mm256_min_ps(distance, distance_fold);
+        distance_fold = _mm256_permute_ps(distance, 0b10110001);
+        /** At this moment, distance should be the min value * 8 */
+        distance = _mm256_min_ps(distance, distance_fold);
+
+        float min_distance[8];
+        _mm256_storeu_ps(min_distance, distance);
+        int index = -1;
+    
+        distance_3 = _mm256_cmp_ps(distance_3, distance, _CMP_EQ_OQ);
+        int mask = _mm256_movemask_ps(distance_3);
+        if (mask)
+        {
+            index = 24 + 31 - __builtin_clz(mask);
+        }
+        else
+        {
+            distance_2 = _mm256_cmp_ps(distance_2, distance, _CMP_EQ_OQ);
+            mask = _mm256_movemask_ps(distance_2);
+            if (mask)
+            {
+                index = 16 + 31 - __builtin_clz(mask);
+            }
+            else
+            {
+                distance_1 = _mm256_cmp_ps(distance_1, distance, _CMP_EQ_OQ);
+                mask = _mm256_movemask_ps(distance_1);
+                if (mask)
+                {
+                    index = 8 + 31 - __builtin_clz(mask);
+                }
+                else
+                {
+                    distance_0 = _mm256_cmp_ps(distance_0, distance, _CMP_EQ_OQ);
+                    mask = _mm256_movemask_ps(distance_0);
+                    index = 31 - __builtin_clz(mask);
+                }
+            }
+        }
+
+        dst->pixel_indexs[i] = index;
+        error += sqrtf(min_distance[0]);
+
+        centers[index].y_sum += image->pixels[i].ycbcr.y;
+        centers[index].cb_sum += image->pixels[i].ycbcr.cb;
+        centers[index].cr_sum += image->pixels[i].ycbcr.cr;
+        centers[index].count++;
+    }
+    return error;
+}
+
 #endif
 
 
