@@ -14,12 +14,21 @@
 #include "../server/config.h"
 #include "../../common/image.h"
 
+enum
+{
+    MODE_STRETCH,
+    MODE_FIT,
+    MODE_FILL,
+    MODE_MAX,
+};
+
 int main(int argc, char *argv[]) {
     const char* filename = NULL;
     const char* server_path = DEFAULT_SOCK_PATH;
-    
+    int mode = MODE_STRETCH;
+
     int opt = -1;
-    while((opt = getopt(argc, argv, "i:s:")) != -1)
+    while((opt = getopt(argc, argv, "i:s:m:")) != -1)
     {
         switch(opt)
         {
@@ -29,13 +38,20 @@ int main(int argc, char *argv[]) {
             case 's':
                 server_path = optarg;
                 break;
+            case 'm':
+                mode = atoi(optarg);
+                break;
             default:
                 break;
         }
     }
-    if (filename == NULL)
+    if (filename == NULL || mode < 0 || mode >= MODE_MAX)
     {
-        fprintf(stderr, "Usage: %s -i <input file> [-s <server path>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s -i <input file> [-s <server path>] [-m <mode>]\n", argv[0]);
+        fprintf(stderr, "\tModes:\n");
+        fprintf(stderr, "\t\t0: Stretch\n");
+        fprintf(stderr, "\t\t1: Fit\n");
+        fprintf(stderr, "\t\t2: Fill\n");
         return 1;
     }
 
@@ -168,9 +184,47 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
+    int converted_width, converted_height;
+
+    switch (mode)
+    {
+    case MODE_STRETCH:
+        converted_width = CONST_SCREEN_WIDTH;
+        converted_height = CONST_SCREEN_HEIGHT;
+        break;
+    case MODE_FIT:
+        if ((float)frame->width / (float)frame->height > (float)CONST_SCREEN_WIDTH / (float)CONST_SCREEN_HEIGHT)
+        {
+            converted_width = CONST_SCREEN_WIDTH;
+            converted_height = frame->height * CONST_SCREEN_WIDTH / frame->width;
+        }
+        else
+        {
+            converted_width = frame->width * CONST_SCREEN_HEIGHT / frame->height;
+            converted_height = CONST_SCREEN_HEIGHT;
+        }
+        break;
+    case MODE_FILL:
+        if ((float)frame->width / (float)frame->height > (float)CONST_SCREEN_WIDTH / (float)CONST_SCREEN_HEIGHT)
+        {
+            converted_width = frame->width * CONST_SCREEN_HEIGHT / frame->height;
+            converted_height = CONST_SCREEN_HEIGHT;
+        }
+        else
+        {
+            converted_width = CONST_SCREEN_WIDTH;
+            converted_height = frame->height * CONST_SCREEN_WIDTH / frame->width;
+        }
+        break;
+    default:
+        ret = 1;
+        fprintf(stderr, "Invalid mode\n");
+        goto cleanup;
+    }
+
     // Initialize conversion context
     sws_ctx = sws_getContext(frame->width, frame->height, codec_ctx->pix_fmt,
-                            CONST_SCREEN_WIDTH, CONST_SCREEN_HEIGHT, AV_PIX_FMT_BGR24,
+                            converted_width, converted_height, AV_PIX_FMT_BGR24,
                             SWS_BILINEAR, NULL, NULL, NULL);
     if (!sws_ctx) {
         fprintf(stderr, "Could not create sws context\n");
@@ -178,7 +232,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Allocate image
-    int buffer_size = av_image_get_buffer_size(AV_PIX_FMT_BGR24, CONST_SCREEN_WIDTH, CONST_SCREEN_HEIGHT, 1);
+    int buffer_size = av_image_get_buffer_size(AV_PIX_FMT_BGR24, converted_width, converted_height, 1);
     bgr_buffer = av_malloc(buffer_size);
     if (!bgr_buffer) {
         fprintf(stderr, "Could not allocate BGR buffer\n");
@@ -187,12 +241,12 @@ int main(int argc, char *argv[]) {
 
     // Allocate converted frame
     converted_frame = av_frame_alloc();
-    converted_frame->width = CONST_SCREEN_WIDTH;
-    converted_frame->height = CONST_SCREEN_HEIGHT;
+    converted_frame->width = converted_width;
+    converted_frame->height = converted_height;
     converted_frame->format = AV_PIX_FMT_BGR24;
     av_image_fill_arrays(converted_frame->data, converted_frame->linesize,
                         bgr_buffer, AV_PIX_FMT_BGR24,
-                        converted_frame->width, converted_frame->height, 1);
+                        converted_frame->width, converted_frame->height, 32);
 
     // Perform conversion
     sws_scale(sws_ctx, (const uint8_t *const *)frame->data, frame->linesize,
@@ -207,15 +261,37 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Could not allocate image");
         goto cleanup;
     }
+    /** erase the image to black */
+    memset(image->pixels, 0, CONST_FB_SIZE);
+
+    int x_offset = (converted_frame->width - CONST_SCREEN_WIDTH) / 2;
+    int y_offset = (converted_frame->height - CONST_SCREEN_HEIGHT) / 2;   
 
     for (int y = 0; y < converted_frame->height; y++)
     {
+        if (y < y_offset)
+        {
+            continue;
+        }
+        if (y >= y_offset + (int)image->height)
+        {
+            break;
+        }
         for (int x = 0; x < converted_frame->width; x++)
         {
+            if (x < x_offset)
+            {
+                continue;
+            }
+            if (x >= x_offset + (int)image->width)
+            {
+                break;
+            }
             int src_index = y * converted_frame->linesize[0] + x * 3;
-            image->pixels[y * converted_frame->width + x].bgr.b = converted_frame->data[0][src_index];
-            image->pixels[y * converted_frame->width + x].bgr.g = converted_frame->data[0][src_index + 1];
-            image->pixels[y * converted_frame->width + x].bgr.r = converted_frame->data[0][src_index + 2];
+            int dst_index = (y - y_offset) * image->width + (x - x_offset);
+            image->pixels[dst_index].bgr.b = converted_frame->data[0][src_index];
+            image->pixels[dst_index].bgr.g = converted_frame->data[0][src_index + 1];
+            image->pixels[dst_index].bgr.r = converted_frame->data[0][src_index + 2];
         }
     }
 
@@ -227,7 +303,8 @@ int main(int argc, char *argv[]) {
         goto cleanup;
     }
 
-    printf("Dimensions: %dx%d\n", frame->width, frame->height);
+    printf("Original dimensions: %dx%d\n", frame->width, frame->height);
+    printf("Converted dimensions: %dx%d\n", converted_width, converted_height);
 
     ret = 0;
 

@@ -19,12 +19,17 @@
 #include <sys/un.h>
 
 #include "../../common/image.h"
-#include "../../common/k_means_compression.h"
-#include "../../common/color_conversion.h"
 #include "../server/config.h"
 
+enum
+{
+    MODE_STRETCH,
+    MODE_FIT,
+    MODE_FILL,
+    MODE_MAX,
+};
 
-static int resize_frame_to_bgr_image(const AVFrame* src, image_t* dst);
+static int resize_frame_to_bgr_image(const AVFrame* src, image_t* dst, int mode);
 static uint64_t now_us();
 
 #define CHECK_EXPR(expr, message) \
@@ -38,10 +43,13 @@ do { \
 
 int main(int argc, char* const* argv)
 {
+    int rc = 0;
     const char* input_file = NULL;
     const char* server_path = DEFAULT_SOCK_PATH;
+    int mode = MODE_STRETCH;
+
     int opt = -1;
-    while ((opt = getopt(argc, argv, "s:i:")) != -1)
+    while ((opt = getopt(argc, argv, "s:i:m:")) != -1)
     {
         switch (opt)
         {
@@ -51,18 +59,26 @@ int main(int argc, char* const* argv)
         case 'i':
             input_file = optarg;
             break;
+        case 'm':
+            mode = atoi(optarg);
+            break;
         default:
             break;
         }
     }
-    if (input_file == NULL)
+    if (input_file == NULL || mode < 0 || mode >= MODE_MAX)
     {
-        fprintf(stderr, "Usage: %s -i <input file> [-s <server path>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s -i <input file> [-s <server path>] [-m <mode>]\n", argv[0]);
+        fprintf(stderr, "\tModes:\n");
+        fprintf(stderr, "\t\t0: Stretch\n");
+        fprintf(stderr, "\t\t1: Fit\n");
+        fprintf(stderr, "\t\t2: Fill\n");
         return 1;
     }
 
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    CHECK_EXPR(fd != -1, "Failed to create socket");
+    (void)server_path;
+    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK_EXPR(server_fd != -1, "Failed to create socket");
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
@@ -72,7 +88,7 @@ int main(int argc, char* const* argv)
     {
         addr.sun_path[0] = '\0';
     }
-    int rc = connect(fd, (struct sockaddr*)&addr, addr_len);
+    rc = connect(server_fd, (struct sockaddr*)&addr, addr_len);
     CHECK_EXPR(rc == 0, "Failed to connect to server");
 
     AVFormatContext* format_context = NULL;
@@ -130,22 +146,18 @@ int main(int argc, char* const* argv)
                 CHECK_EXPR(rc == 0, "Failed to receive frame");
                 if (image == NULL)
                 {
-                    image = image_new(frame->width, frame->height);
+                    image = image_new(CONST_SCREEN_WIDTH, CONST_SCREEN_HEIGHT);
                     CHECK_EXPR(image, "Failed to allocate image");
                 }
-                if (compressed_image == NULL)
                 {
-                    compressed_image = color_palette_image_new(CONST_N_COLOR, frame->width, frame->height);
-                    CHECK_EXPR(compressed_image, "Failed to allocate compressed image");
-                }
-                {
-                    rc = resize_frame_to_bgr_image(frame, image);
+                    rc = resize_frame_to_bgr_image(frame, image, mode);
                     CHECK_EXPR(rc == 0, "Failed to convert frame to image");
-                    rc = (int)send(fd, image->pixels, CONST_FB_SIZE, SOCK_NONBLOCK);
+                    rc = (int)send(server_fd, image->pixels, CONST_FB_SIZE, SOCK_NONBLOCK);
                     CHECK_EXPR(rc == CONST_FB_SIZE, "Failed to write to server");
                 }
                 n_frame++;
                 av_frame_unref(frame);
+
                 uint64_t now = now_us();
                 if (last_frame_time == 0)
                 {
@@ -162,24 +174,60 @@ int main(int argc, char* const* argv)
     }
 
     image_free(image);
-    color_palette_image_free(compressed_image);
     av_packet_free(&packet);
     av_frame_free(&frame);
     avcodec_free_context(&decoder_context);
     avformat_close_input(&format_context);
     avformat_free_context(format_context);
+    close(server_fd);
     return 0;
 }
 
-static int resize_frame_to_bgr_image(const AVFrame* src, image_t* dst)
+static int resize_frame_to_bgr_image(const AVFrame* src, image_t* dst, int mode)
 {
+    int converted_width, converted_height;
+
+    switch (mode)
+    {
+    case MODE_STRETCH:
+        converted_width = dst->width;
+        converted_height = dst->height;
+        break;
+    case MODE_FIT:
+        if ((float)src->width / (float)src->height > (float)dst->width / (float)dst->height)
+        {
+            converted_width = dst->width;
+            converted_height = src->height * dst->width / src->width;
+        }
+        else
+        {
+            converted_width = src->width * dst->height / src->height;
+            converted_height = dst->height;
+        }
+        break;
+    case MODE_FILL:
+        if ((float)src->width / (float)src->height > (float)dst->width / (float)dst->height)
+        {
+            converted_width = src->width * dst->height / src->height;
+            converted_height = dst->height;
+        }
+        else
+        {
+            converted_width = dst->width;
+            converted_height = src->height * dst->width / src->width;
+        }
+        break;
+    default:
+        return -1;
+    }
+
     /** Convert src to RGB24  and resize to the target bmp size */
     AVFrame* frame = av_frame_alloc();
     if (!frame)
         return -1;
     frame->format = AV_PIX_FMT_RGB24;
-    frame->width = CONST_SCREEN_WIDTH;
-    frame->height = CONST_SCREEN_HEIGHT;
+    frame->width = converted_width;
+    frame->height = converted_height;
     int rc = av_image_alloc(
         frame->data, frame->linesize, frame->width, frame->height, frame->format, 32);
     if (rc < 0)
@@ -208,17 +256,39 @@ static int resize_frame_to_bgr_image(const AVFrame* src, image_t* dst)
         av_frame_free(&frame);
         return -1;
     }
-    dst->color_space = COLOR_SPACE_BGR;
+    
+    int x_offset = (frame->width - dst->width) / 2;
+    int y_offset = (frame->height - dst->height) / 2;   
+
     for (int y = 0; y < frame->height; y++)
     {
+        if (y < y_offset)
+        {
+            continue;
+        }
+        if (y >= y_offset + (int)dst->height)
+        {
+            break;
+        }
         for (int x = 0; x < frame->width; x++)
         {
+            if (x < x_offset)
+            {
+                continue;
+            }
+            if (x >= x_offset + (int)dst->width)
+            {
+                break;
+            }
             int src_index = y * frame->linesize[0] + x * 3;
-            dst->pixels[y * frame->width + x].bgr.r = frame->data[0][src_index];
-            dst->pixels[y * frame->width + x].bgr.g = frame->data[0][src_index + 1];
-            dst->pixels[y * frame->width + x].bgr.b = frame->data[0][src_index + 2];
+            int dst_index = (y - y_offset) * dst->width + (x - x_offset);
+            dst->pixels[dst_index].bgr.r = frame->data[0][src_index];
+            dst->pixels[dst_index].bgr.g = frame->data[0][src_index + 1];
+            dst->pixels[dst_index].bgr.b = frame->data[0][src_index + 2];
         }
     }
+    dst->color_space = COLOR_SPACE_BGR;
+
     av_freep(&frame->data[0]);
     av_frame_free(&frame);
     return 0;
