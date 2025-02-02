@@ -22,7 +22,7 @@ endif()
 
 add_executable(usb-display-play-video
     usb_screen_play_video.c
-    ../../common/bmp.c
+    usb_screen_client.c
     ../../common/color_conversion.c
     ../../common/image.c
     ../../common/k_means_compression.c)
@@ -36,7 +36,7 @@ target_link_libraries(usb-display-play-video
 
 add_executable(usb-display-show-image
     usb_screen_show_image.c
-    ../../common/bmp.c
+    usb_screen_client.c
     ../../common/color_conversion.c
     ../../common/image.c
     ../../common/k_means_compression.c)
@@ -47,4 +47,19 @@ target_link_libraries(usb-display-show-image
     avutil
     swscale
     m)
+
+add_executable(usb-display-rtmp
+    usb_screen_rtmp.c
+    usb_screen_client.c
+    ../../common/image.c
+    ../../common/color_conversion.c
+    ../../common/k_means_compression.c)
+
+target_link_libraries(usb-display-rtmp
+    avcodec
+    avformat
+    avutil
+    swscale
+    m)
+
 

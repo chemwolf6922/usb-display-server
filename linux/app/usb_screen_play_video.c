@@ -1,35 +1,15 @@
 #define _GNU_SOURCE
 
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/imgutils.h>
-#include <libswscale/swscale.h>
-#include <libavutil/opt.h>
 #include <stdio.h>
-#include <stdbool.h>
-#include <limits.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <string.h>
 #include <time.h>
-#include <errno.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 
-#include "../../common/image.h"
-#include "../server/config.h"
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 
-enum
-{
-    MODE_STRETCH,
-    MODE_FIT,
-    MODE_FILL,
-    MODE_MAX,
-};
+#include "usb_screen_client.h"
 
-static int resize_frame_to_bgr_image(const AVFrame* src, image_t* dst, int mode);
 static uint64_t now_us();
 
 #define CHECK_EXPR(expr, message) \
@@ -45,8 +25,8 @@ int main(int argc, char* const* argv)
 {
     int rc = 0;
     const char* input_file = NULL;
-    const char* server_path = DEFAULT_SOCK_PATH;
-    int mode = MODE_STRETCH;
+    const char* server_path = NULL;
+    int mode = USB_SCREEN_MODE_STRETCH;
 
     int opt = -1;
     while ((opt = getopt(argc, argv, "s:i:m:")) != -1)
@@ -66,7 +46,7 @@ int main(int argc, char* const* argv)
             break;
         }
     }
-    if (input_file == NULL || mode < 0 || mode >= MODE_MAX)
+    if (input_file == NULL || mode < 0 || mode >= USB_SCREEN_MODE_MAX)
     {
         fprintf(stderr, "Usage: %s -i <input file> [-s <server path>] [-m <mode>]\n", argv[0]);
         fprintf(stderr, "\tModes:\n");
@@ -75,21 +55,6 @@ int main(int argc, char* const* argv)
         fprintf(stderr, "\t\t2: Fill\n");
         return 1;
     }
-
-    (void)server_path;
-    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    CHECK_EXPR(server_fd != -1, "Failed to create socket");
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, server_path, sizeof(addr.sun_path) - 1);
-    size_t addr_len = offsetof(struct sockaddr_un, sun_path) + strlen(addr.sun_path);
-    if (addr.sun_path[0] == '@')
-    {
-        addr.sun_path[0] = '\0';
-    }
-    rc = connect(server_fd, (struct sockaddr*)&addr, addr_len);
-    CHECK_EXPR(rc == 0, "Failed to connect to server");
 
     AVFormatContext* format_context = NULL;
     rc = avformat_open_input(&format_context, input_file, NULL, NULL);
@@ -107,6 +72,16 @@ int main(int argc, char* const* argv)
         }
     }
     CHECK_EXPR(input_stream, "Failed to find video stream");
+
+    usb_screen_client_option_t client_option;
+    memset(&client_option, 0, sizeof(client_option));
+    client_option.server_path = server_path;
+    client_option.frame_width = input_stream->codecpar->width;
+    client_option.frame_height = input_stream->codecpar->height;
+    client_option.frame_format = input_stream->codecpar->format;
+    client_option.mode = mode;
+    usb_screen_client_t* client = usb_screen_client_connect(&client_option);
+    CHECK_EXPR(client, "Failed to connect to server");
 
     const AVCodec* decoder = avcodec_find_decoder(input_stream->codecpar->codec_id);
     CHECK_EXPR(decoder, "Failed to find decoder");
@@ -126,8 +101,6 @@ int main(int argc, char* const* argv)
     CHECK_EXPR(frame, "Failed to allocate frame");
     AVPacket* packet = av_packet_alloc();
     CHECK_EXPR(packet, "Failed to allocate packet");
-    image_t* image = NULL;
-    color_palette_image_t* compressed_image = NULL;
     int n_frame = 0;
     uint64_t last_frame_time = now_us();
     while(av_read_frame(format_context, packet) >= 0)
@@ -144,20 +117,12 @@ int main(int argc, char* const* argv)
                     break;
                 }
                 CHECK_EXPR(rc == 0, "Failed to receive frame");
-                if (image == NULL)
-                {
-                    image = image_new(CONST_SCREEN_WIDTH, CONST_SCREEN_HEIGHT);
-                    CHECK_EXPR(image, "Failed to allocate image");
-                }
-                {
-                    rc = resize_frame_to_bgr_image(frame, image, mode);
-                    CHECK_EXPR(rc == 0, "Failed to convert frame to image");
-                    rc = (int)send(server_fd, image->pixels, CONST_FB_SIZE, SOCK_NONBLOCK);
-                    CHECK_EXPR(rc == CONST_FB_SIZE, "Failed to write to server");
-                }
+                rc = client->send_frame(client, frame);
+                CHECK_EXPR(rc == 0, "Failed to send frame");
                 n_frame++;
                 av_frame_unref(frame);
 
+                /** @todo improve frame pacing */
                 uint64_t now = now_us();
                 if (last_frame_time == 0)
                 {
@@ -172,125 +137,12 @@ int main(int argc, char* const* argv)
             }
         }
     }
-
-    image_free(image);
+    
     av_packet_free(&packet);
     av_frame_free(&frame);
     avcodec_free_context(&decoder_context);
     avformat_close_input(&format_context);
-    avformat_free_context(format_context);
-    close(server_fd);
-    return 0;
-}
-
-static int resize_frame_to_bgr_image(const AVFrame* src, image_t* dst, int mode)
-{
-    int converted_width, converted_height;
-
-    switch (mode)
-    {
-    case MODE_STRETCH:
-        converted_width = dst->width;
-        converted_height = dst->height;
-        break;
-    case MODE_FIT:
-        if ((float)src->width / (float)src->height > (float)dst->width / (float)dst->height)
-        {
-            converted_width = dst->width;
-            converted_height = src->height * dst->width / src->width;
-        }
-        else
-        {
-            converted_width = src->width * dst->height / src->height;
-            converted_height = dst->height;
-        }
-        break;
-    case MODE_FILL:
-        if ((float)src->width / (float)src->height > (float)dst->width / (float)dst->height)
-        {
-            converted_width = src->width * dst->height / src->height;
-            converted_height = dst->height;
-        }
-        else
-        {
-            converted_width = dst->width;
-            converted_height = src->height * dst->width / src->width;
-        }
-        break;
-    default:
-        return -1;
-    }
-
-    /** Convert src to RGB24  and resize to the target bmp size */
-    AVFrame* frame = av_frame_alloc();
-    if (!frame)
-        return -1;
-    frame->format = AV_PIX_FMT_RGB24;
-    frame->width = converted_width;
-    frame->height = converted_height;
-    int rc = av_image_alloc(
-        frame->data, frame->linesize, frame->width, frame->height, frame->format, 32);
-    if (rc < 0)
-    {
-        av_frame_free(&frame);
-        return -1;
-    }
-    struct SwsContext* sws_context = sws_getContext(
-        src->width, src->height, src->format,
-        frame->width, frame->height, frame->format,
-        SWS_BILINEAR, NULL, NULL, NULL);
-    if (!sws_context)
-    {
-        av_freep(&frame->data[0]);
-        av_frame_free(&frame);
-        return -1;
-    }
-    rc = sws_scale(
-        sws_context,
-        (const uint8_t* const*)(src->data), src->linesize, 0, src->height,
-        frame->data, frame->linesize);
-    sws_freeContext(sws_context);
-    if (rc < 0)
-    {
-        av_freep(&frame->data[0]);
-        av_frame_free(&frame);
-        return -1;
-    }
-    
-    int x_offset = (frame->width - dst->width) / 2;
-    int y_offset = (frame->height - dst->height) / 2;   
-
-    for (int y = 0; y < frame->height; y++)
-    {
-        if (y < y_offset)
-        {
-            continue;
-        }
-        if (y >= y_offset + (int)dst->height)
-        {
-            break;
-        }
-        for (int x = 0; x < frame->width; x++)
-        {
-            if (x < x_offset)
-            {
-                continue;
-            }
-            if (x >= x_offset + (int)dst->width)
-            {
-                break;
-            }
-            int src_index = y * frame->linesize[0] + x * 3;
-            int dst_index = (y - y_offset) * dst->width + (x - x_offset);
-            dst->pixels[dst_index].bgr.r = frame->data[0][src_index];
-            dst->pixels[dst_index].bgr.g = frame->data[0][src_index + 1];
-            dst->pixels[dst_index].bgr.b = frame->data[0][src_index + 2];
-        }
-    }
-    dst->color_space = COLOR_SPACE_BGR;
-
-    av_freep(&frame->data[0]);
-    av_frame_free(&frame);
+    client->close(client);
     return 0;
 }
 
