@@ -84,8 +84,14 @@ inline static void ycbcr_to_bgr_batch(const pixel_t* src, pixel_t* dst, int n)
             _mm512_mul_ps(cb, _mm512_set1_ps(1.8556f)));
 
         __m512i r_i = _mm512_cvt_roundps_epi32(r, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        r_i = _mm512_min_epi32(r_i, _mm512_set1_epi32(255));
+        r_i = _mm512_max_epi32(r_i, _mm512_setzero_si512());
         __m512i g_i = _mm512_cvt_roundps_epi32(g, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        g_i = _mm512_min_epi32(g_i, _mm512_set1_epi32(255));
+        g_i = _mm512_max_epi32(g_i, _mm512_setzero_si512());
         __m512i b_i = _mm512_cvt_roundps_epi32(b, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        b_i = _mm512_min_epi32(b_i, _mm512_set1_epi32(255));
+        b_i = _mm512_max_epi32(b_i, _mm512_setzero_si512());
 
         /** @todo check endian */
         bytes = _mm512_permutex2var_epi8(b_i, _mm512_set_epi8(
@@ -149,9 +155,18 @@ inline static void ycbcr_to_bgr_batch(const pixel_t* src, pixel_t* dst, int n)
     {
         ycbcr_pixel_t ycbcr = src[i].ycbcr;
         bgr_pixel_t* bgr = &dst[i].bgr;
-        bgr->r = (uint8_t)(ycbcr.y + 1.5748 * ycbcr.cr);
-        bgr->g = (uint8_t)(ycbcr.y - 0.1873 * ycbcr.cb - 0.4681 * ycbcr.cr);
-        bgr->b = (uint8_t)(ycbcr.y + 1.8556 * ycbcr.cb);
+        float r = roundf(ycbcr.y + 1.5748 * ycbcr.cr);
+        r = fminf(r, 255.0f);
+        r = fmaxf(r, 0.0f);
+        bgr->r = (uint8_t)r;
+        float g = roundf(ycbcr.y - 0.1873 * ycbcr.cb - 0.4681 * ycbcr.cr);
+        g = fminf(g, 255.0f);
+        g = fmaxf(g, 0.0f);
+        bgr->g = (uint8_t)g;
+        float b = roundf(ycbcr.y + 1.8556 * ycbcr.cb);
+        b = fminf(b, 255.0f);
+        b = fmaxf(b, 0.0f);
+        bgr->b = (uint8_t)b;
     }
 }
 #elif defined(__AVX2__)
@@ -191,13 +206,19 @@ inline static void ycbcr_to_bgr_batch(const pixel_t* src, pixel_t* dst, int n)
         __m256 r = _mm256_add_ps(y,
             _mm256_mul_ps(cr, _mm256_set1_ps(1.5748f)));
         r = _mm256_round_ps(r, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        r = _mm256_min_ps(r, _mm256_set1_ps(255.0f));
+        r = _mm256_max_ps(r, _mm256_setzero_ps());
         __m256 g = _mm256_add_ps(y,
             _mm256_add_ps(_mm256_mul_ps(cb, _mm256_set1_ps(-0.1873f)),
                 _mm256_mul_ps(cr, _mm256_set1_ps(-0.4681f))));
         g = _mm256_round_ps(g, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        g = _mm256_min_ps(g, _mm256_set1_ps(255.0f));
+        g = _mm256_max_ps(g, _mm256_setzero_ps());
         __m256 b = _mm256_add_ps(y,
             _mm256_mul_ps(cb, _mm256_set1_ps(1.8556f)));
         b = _mm256_round_ps(b, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        b = _mm256_min_ps(b, _mm256_set1_ps(255.0f));
+        b = _mm256_max_ps(b, _mm256_setzero_ps());
         float buffer[8];
         _mm256_storeu_ps(buffer, r);
         dst[i].bgr.r = buffer[0];
@@ -231,9 +252,18 @@ inline static void ycbcr_to_bgr_batch(const pixel_t* src, pixel_t* dst, int n)
     {
         ycbcr_pixel_t ycbcr = src[i].ycbcr;
         bgr_pixel_t* bgr = &dst[i].bgr;
-        bgr->r = (uint8_t)(ycbcr.y + 1.5748 * ycbcr.cr);
-        bgr->g = (uint8_t)(ycbcr.y - 0.1873 * ycbcr.cb - 0.4681 * ycbcr.cr);
-        bgr->b = (uint8_t)(ycbcr.y + 1.8556 * ycbcr.cb);
+        float r = roundf(ycbcr.y + 1.5748 * ycbcr.cr);
+        r = fminf(r, 255.0f);
+        r = fmaxf(r, 0.0f);
+        bgr->r = (uint8_t)r;
+        float g = roundf(ycbcr.y - 0.1873 * ycbcr.cb - 0.4681 * ycbcr.cr);
+        g = fminf(g, 255.0f);
+        g = fmaxf(g, 0.0f);
+        bgr->g = (uint8_t)g;
+        float b = roundf(ycbcr.y + 1.8556 * ycbcr.cb);
+        b = fminf(b, 255.0f);
+        b = fmaxf(b, 0.0f);
+        bgr->b = (uint8_t)b;
     }
 }
 #else
@@ -243,9 +273,18 @@ inline static void ycbcr_to_bgr_batch(const pixel_t* src, pixel_t* dst, int n)
     {
         ycbcr_pixel_t ycbcr = src[i].ycbcr;
         bgr_pixel_t* bgr = &dst[i].bgr;
-        bgr->r = (uint8_t)(ycbcr.y + 1.5748 * ycbcr.cr);
-        bgr->g = (uint8_t)(ycbcr.y - 0.1873 * ycbcr.cb - 0.4681 * ycbcr.cr);
-        bgr->b = (uint8_t)(ycbcr.y + 1.8556 * ycbcr.cb);
+        float r = roundf(ycbcr.y + 1.5748 * ycbcr.cr);
+        r = fminf(r, 255.0f);
+        r = fmaxf(r, 0.0f);
+        bgr->r = (uint8_t)r;
+        float g = roundf(ycbcr.y - 0.1873 * ycbcr.cb - 0.4681 * ycbcr.cr);
+        g = fminf(g, 255.0f);
+        g = fmaxf(g, 0.0f);
+        bgr->g = (uint8_t)g;
+        float b = roundf(ycbcr.y + 1.8556 * ycbcr.cb);
+        b = fminf(b, 255.0f);
+        b = fmaxf(b, 0.0f);
+        bgr->b = (uint8_t)b;
     }
 }
 #endif
@@ -329,8 +368,14 @@ inline static void bgr_to_ycbcr_batch(const pixel_t* src, pixel_t* dst, int n)
                 _mm512_mul_ps(b, _mm512_set1_ps(-0.0458f))));
 
         __m512i y_i = _mm512_cvt_roundps_epi32(y, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        y_i = _mm512_min_epi32(y_i, _mm512_set1_epi32(255));
+        y_i = _mm512_max_epi32(y_i, _mm512_setzero_si512());
         __m512i cb_i = _mm512_cvt_roundps_epi32(cb, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        cb_i = _mm512_min_epi32(cb_i, _mm512_set1_epi32(127));
+        cb_i = _mm512_max_epi32(cb_i, _mm512_set1_epi32(-128));
         __m512i cr_i = _mm512_cvt_roundps_epi32(cr, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        cr_i = _mm512_min_epi32(cr_i, _mm512_set1_epi32(127));
+        cr_i = _mm512_max_epi32(cr_i, _mm512_set1_epi32(-128));
 
         /** @todo check endian */
         bytes = _mm512_permutex2var_epi8(y_i, _mm512_set_epi8(
@@ -394,9 +439,18 @@ inline static void bgr_to_ycbcr_batch(const pixel_t* src, pixel_t* dst, int n)
     {
         bgr_pixel_t bgr = src[i].bgr;
         ycbcr_pixel_t* ycbcr = &dst[i].ycbcr;
-        ycbcr->y = (uint8_t)roundf(0.2126f * bgr.r + 0.7152f * bgr.g + 0.0722f * bgr.b);
-        ycbcr->cb = (int8_t)roundf(-0.1146f * bgr.r - 0.3854f * bgr.g + 0.5000f * bgr.b);
-        ycbcr->cr = (int8_t)roundf(0.5000f * bgr.r - 0.4542f * bgr.g - 0.0458f * bgr.b);
+        float y = roundf(0.2126f * bgr.r + 0.7152f * bgr.g + 0.0722f * bgr.b);
+        y = fminf(y, 255.0f);
+        y = fmaxf(y, 0.0f);
+        ycbcr->y = (uint8_t)y;
+        float cb = roundf(-0.1146f * bgr.r - 0.3854f * bgr.g + 0.5000f * bgr.b);
+        cb = fminf(cb, 127.0f);
+        cb = fmaxf(cb, -128.0f);
+        ycbcr->cb = (int8_t)cb;
+        float cr = roundf(0.5000f * bgr.r - 0.4542f * bgr.g - 0.0458f * bgr.b);
+        cr = fminf(cr, 127.0f);
+        cr = fmaxf(cr, -128.0f);
+        ycbcr->cr = (int8_t)cr;
     }
 }
 #elif defined(__AVX2__)
@@ -437,14 +491,20 @@ inline static void bgr_to_ycbcr_batch(const pixel_t* src, pixel_t* dst, int n)
             _mm256_add_ps(_mm256_mul_ps(g, _mm256_set1_ps(0.7152f)),
                 _mm256_mul_ps(b, _mm256_set1_ps(0.0722f))));
         y = _mm256_round_ps(y, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        y = _mm256_min_ps(y, _mm256_set1_ps(255.0f));
+        y = _mm256_max_ps(y, _mm256_setzero_ps());
         __m256 cb = _mm256_add_ps(_mm256_mul_ps(r, _mm256_set1_ps(-0.1146f)),
             _mm256_add_ps(_mm256_mul_ps(g, _mm256_set1_ps(-0.3854f)),
                 _mm256_mul_ps(b, _mm256_set1_ps(0.5000f))));
         cb = _mm256_round_ps(cb, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        cb = _mm256_min_ps(cb, _mm256_set1_ps(127.0f));
+        cb = _mm256_max_ps(cb, _mm256_set1_ps(-128.0f));
         __m256 cr = _mm256_add_ps(_mm256_mul_ps(r, _mm256_set1_ps(0.5000f)),
             _mm256_add_ps(_mm256_mul_ps(g, _mm256_set1_ps(-0.4542f)),
                 _mm256_mul_ps(b, _mm256_set1_ps(-0.0458f))));
         cr = _mm256_round_ps(cr, _MM_FROUND_TO_NEAREST_INT |_MM_FROUND_NO_EXC);
+        cr = _mm256_min_ps(cr, _mm256_set1_ps(127.0f));
+        cr = _mm256_max_ps(cr, _mm256_set1_ps(-128.0f));
         float buffer[8];
         _mm256_storeu_ps(buffer, y);
         dst[i].ycbcr.y = buffer[0];
@@ -478,9 +538,18 @@ inline static void bgr_to_ycbcr_batch(const pixel_t* src, pixel_t* dst, int n)
     {
         bgr_pixel_t bgr = src[i].bgr;
         ycbcr_pixel_t* ycbcr = &dst[i].ycbcr;
-        ycbcr->y = (uint8_t)roundf(0.2126f * bgr.r + 0.7152f * bgr.g + 0.0722f * bgr.b);
-        ycbcr->cb = (int8_t)roundf(-0.1146f * bgr.r - 0.3854f * bgr.g + 0.5000f * bgr.b);
-        ycbcr->cr = (int8_t)roundf(0.5000f * bgr.r - 0.4542f * bgr.g - 0.0458f * bgr.b);
+        float y = roundf(0.2126f * bgr.r + 0.7152f * bgr.g + 0.0722f * bgr.b);
+        y = fminf(y, 255.0f);
+        y = fmaxf(y, 0.0f);
+        ycbcr->y = (uint8_t)y;
+        float cb = roundf(-0.1146f * bgr.r - 0.3854f * bgr.g + 0.5000f * bgr.b);
+        cb = fminf(cb, 127.0f);
+        cb = fmaxf(cb, -128.0f);
+        ycbcr->cb = (int8_t)cb;
+        float cr = roundf(0.5000f * bgr.r - 0.4542f * bgr.g - 0.0458f * bgr.b);
+        cr = fminf(cr, 127.0f);
+        cr = fmaxf(cr, -128.0f);
+        ycbcr->cr = (int8_t)cr;
     }
 }
 #else
@@ -491,9 +560,18 @@ inline static void bgr_to_ycbcr_batch(const pixel_t* src, pixel_t* dst, int n)
         /** Make a copy to enable in place conversion */
         bgr_pixel_t bgr = src[i].bgr;
         ycbcr_pixel_t* ycbcr = &dst[i].ycbcr;
-        ycbcr->y = (uint8_t)roundf(0.2126f * bgr.r + 0.7152f * bgr.g + 0.0722f * bgr.b);
-        ycbcr->cb = (int8_t)roundf(-0.1146f * bgr.r - 0.3854f * bgr.g + 0.5000f * bgr.b);
-        ycbcr->cr = (int8_t)roundf(0.5000f * bgr.r - 0.4542f * bgr.g - 0.0458f * bgr.b);
+        float y = roundf(0.2126f * bgr.r + 0.7152f * bgr.g + 0.0722f * bgr.b);
+        y = fminf(y, 255.0f);
+        y = fmaxf(y, 0.0f);
+        ycbcr->y = (uint8_t)y;
+        float cb = roundf(-0.1146f * bgr.r - 0.3854f * bgr.g + 0.5000f * bgr.b);
+        cb = fminf(cb, 127.0f);
+        cb = fmaxf(cb, -128.0f);
+        ycbcr->cb = (int8_t)cb;
+        float cr = roundf(0.5000f * bgr.r - 0.4542f * bgr.g - 0.0458f * bgr.b);
+        cr = fminf(cr, 127.0f);
+        cr = fmaxf(cr, -128.0f);
+        ycbcr->cr = (int8_t)cr;
     }
 }
 #endif

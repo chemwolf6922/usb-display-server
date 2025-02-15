@@ -142,12 +142,13 @@ int pack_color_palette_image(const color_palette_image_t* src, packed_color_pale
     {
         return -1;
     }
+    memset(dst->data, 0, dst->size);
     for (int i = 0; i < src->k; i++)
     {
-        uint16_t bgr565 = ((int)src->color_palettes[i].bgr.r >> 3)
+        uint16_t rgb565 = ((int)src->color_palettes[i].bgr.b >> 3)
             | (((int)src->color_palettes[i].bgr.g >> 2) << 5)
-            | (((int)src->color_palettes[i].bgr.b >> 3) << 11);
-        memcpy(dst->data + i * 2, &bgr565, 2);
+            | (((int)src->color_palettes[i].bgr.r >> 3) << 11);
+        memcpy(dst->data + i * 2, &rgb565, 2);
     }
     uint8_t* pos = dst->data + src->k * 2;
     uint8_t bit_pos = 0;
@@ -168,6 +169,7 @@ int pack_color_palette_image(const color_palette_image_t* src, packed_color_pale
         {
             int bits_to_write = remaining_bits < 8 - bit_pos ? remaining_bits : 8 - bit_pos;
             *pos |= index << bit_pos;
+            index >>= bits_to_write;
             remaining_bits -= bits_to_write;
             bit_pos += bits_to_write;
             if (bit_pos == 8)

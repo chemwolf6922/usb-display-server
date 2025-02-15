@@ -1,8 +1,3 @@
-/**
- * @brief The server accepts bmp frames on a pipe, 
- *     and sends the compressed frames to the device. 
- */
-
 #define _GNU_SOURCE
 
 #include <string.h>
