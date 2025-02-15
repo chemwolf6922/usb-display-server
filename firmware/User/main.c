@@ -16,13 +16,8 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 #include "ch32x035_usbfs_device.h"
+#include "lcd.h"
 
-/** The compressed image data is 6400+32 bytes = 100.5 packets. */
-#define PIXEL_BITS 5
-#define IMAGE_WIDTH 160
-#define IMAGE_HEIGHT 80
-#define COLOR_PALETTE_SIZE 32
-#define IMAGE_SIZE ((IMAGE_HEIGHT * IMAGE_WIDTH * 5 + 7)/8 + COLOR_PALETTE_SIZE * sizeof(uint16_t))
 #define BUFFER_PACKET_COUNT (((IMAGE_SIZE + 63) / 64))
 
 static volatile atomic_bool image_ready = false;
@@ -31,7 +26,8 @@ static struct
 {
     __attribute__((aligned(4))) uint8_t cdc_buffer[64 * BUFFER_PACKET_COUNT];
     int write_offset;
-    uint16_t color_palette[COLOR_PALETTE_SIZE];
+    color_t color_palette[COLOR_PALETTE_SIZE];
+    lcd_t lcd;
 } app;
 
 /*********************************************************************
@@ -54,8 +50,8 @@ int main(void)
     usb_desc_set_serial_number(chip_id_str);
 
     /** RCC init */
-    RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOA, ENABLE );
-    RCC_AHBPeriphClockCmd( RCC_AHBPeriph_DMA1, ENABLE );
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE );
+    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA1, ENABLE );
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
     RCC_AHBPeriphClockCmd(RCC_AHBPeriph_USBFS, ENABLE);
 
@@ -63,15 +59,30 @@ int main(void)
     app.write_offset = 0;
     USBFS_Device_Init( ENABLE , PWR_VDD_SupplyVoltage());
 
+    /** LCD init */
+    app.lcd.spi_prescaler = SPI_BaudRatePrescaler_2;
+    app.lcd.spi = SPI1;
+    app.lcd.clk.group = GPIOA;
+    app.lcd.clk.pin = GPIO_Pin_5;
+    app.lcd.mosi.group = GPIOA;
+    app.lcd.mosi.pin = GPIO_Pin_7;
+    app.lcd.dc.group = GPIOB;
+    app.lcd.dc.pin = GPIO_Pin_0;
+    app.lcd.ncs.group = GPIOB;
+    app.lcd.ncs.pin = GPIO_Pin_3;
+    app.lcd.nrst.group = GPIOB;
+    app.lcd.nrst.pin = GPIO_Pin_1;
+    lcd_init(&app.lcd);
+
     while(1)
     {
         /** Well, WFI does not work as expected. So busy loop it is. */
         while(!image_ready);
         image_ready = false;
-        /** Use uint32_t to load faster */
-        uint32_t* pixels = (uint32_t*)(app.cdc_buffer + COLOR_PALETTE_SIZE * sizeof(uint16_t));
-        /** @todo display image */
-        (void)pixels;
+        lcd_draw_image(
+            &app.lcd,
+            app.cdc_buffer + sizeof(app.color_palette),
+            app.color_palette);
     }
 }
 
@@ -87,7 +98,12 @@ uint8_t* __attribute__((section(".ramcode"))) cdc_hook_on_data(int len)
     app.write_offset += len;
     if (app.write_offset >= IMAGE_SIZE)
     {
-        /** copy the color pallete to avoid overwritten */
+        /** 
+         * This logic is tightly tied to the image size.
+         * A safer approach would be using a circular buffer.
+         */
+
+        /** copy the color palette to avoid overwritten */
         memcpy(app.color_palette, app.cdc_buffer, sizeof(app.color_palette));
         /** move the extra data to the top if any */
         if (app.write_offset > IMAGE_SIZE)
