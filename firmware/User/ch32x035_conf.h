@@ -27,9 +27,9 @@
 #include "ch32x035_tim.h"
 #include "ch32x035_usart.h"
 #include "ch32x035_wwdg.h"
-#include "ch32x035_it.h"
 #include "ch32x035_misc.h"
-
+#include "ch32x035_usb.h"
+#include "systick.h"
 
 #endif
 

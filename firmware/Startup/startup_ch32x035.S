@@ -196,6 +196,18 @@ handle_reset:
 	addi a1, a1, 4
 	bltu a1, a2, 1b
 2:
+/* Load ramcode section from flash to RAM */
+	la a0, _ramcode_rom
+	la a1, _ramcode_ram
+	la a2, _eramcode
+	bgeu a1, a2, 2f
+1:
+	lw t0, (a0)
+	sw t0, (a1)
+	addi a0, a0, 4
+	addi a1, a1, 4
+	bltu a1, a2, 1b
+2:
 /* Clear bss section */
 	la a0, _sbss
 	la a1, _ebss

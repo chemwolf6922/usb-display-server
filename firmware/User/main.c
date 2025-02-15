@@ -10,37 +10,29 @@
 * microcontroller manufactured by Nanjing Qinheng Microelectronics.
 *******************************************************************************/
 
-/*
- *@Note
- *GPIO routine:
- *PA0 push-pull output.
- *
- ***Only PA0--PA15 and PC16--PC17 support input pull-down.
- */
+#include "ch32x035_conf.h"
+#include <stdio.h>
+#include <inttypes.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include "ch32x035_usbfs_device.h"
 
-#include "debug.h"
+/** The compressed image data is 6400+32 bytes = 100.5 packets. */
+#define PIXEL_BITS 5
+#define IMAGE_WIDTH 160
+#define IMAGE_HEIGHT 80
+#define COLOR_PALETTE_SIZE 32
+#define IMAGE_SIZE ((IMAGE_HEIGHT * IMAGE_WIDTH * 5 + 7)/8 + COLOR_PALETTE_SIZE * sizeof(uint16_t))
+#define BUFFER_PACKET_COUNT (((IMAGE_SIZE + 63) / 64))
 
-/* Global define */
+static volatile atomic_bool image_ready = false;
 
-/* Global Variable */
-
-/*********************************************************************
- * @fn      GPIO_Toggle_INIT
- *
- * @brief   Initializes GPIOA.0
- *
- * @return  none
- */
-void GPIO_Toggle_INIT(void)
+static struct
 {
-    GPIO_InitTypeDef GPIO_InitStructure = {0};
-
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init(GPIOA, &GPIO_InitStructure);
-}
+    __attribute__((aligned(4))) uint8_t cdc_buffer[64 * BUFFER_PACKET_COUNT];
+    int write_offset;
+    uint16_t color_palette[COLOR_PALETTE_SIZE];
+} app;
 
 /*********************************************************************
  * @fn      main
@@ -51,20 +43,61 @@ void GPIO_Toggle_INIT(void)
  */
 int main(void)
 {
-    u8 i = 0;
-
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_1);
     SystemCoreClockUpdate();
-    Delay_Init();
-    USART_Printf_Init(115200);
-    printf("SystemClk:%d\r\n", SystemCoreClock);
-    printf( "ChipID:%08x\r\n", DBGMCU_GetCHIPID() );
-    printf("GPIO Toggle TEST\r\n");
-    GPIO_Toggle_INIT();
+    systick_init();
+
+    /* Init serial number */
+    uint32_t chip_id = DBGMCU_GetCHIPID();
+    char chip_id_str[20] = {0};
+    sprintf(chip_id_str, "%"PRIu32, chip_id);
+    usb_desc_set_serial_number(chip_id_str);
+
+    /** RCC init */
+    RCC_APB2PeriphClockCmd( RCC_APB2Periph_GPIOA, ENABLE );
+    RCC_AHBPeriphClockCmd( RCC_AHBPeriph_DMA1, ENABLE );
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO, ENABLE);
+    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_USBFS, ENABLE);
+
+    /* Usb Init */
+    app.write_offset = 0;
+    USBFS_Device_Init( ENABLE , PWR_VDD_SupplyVoltage());
 
     while(1)
     {
-        Delay_Ms(500);
-        GPIO_WriteBit(GPIOA, GPIO_Pin_0, (i == 0) ? (i = Bit_SET) : (i = Bit_RESET));
+        /** Well, WFI does not work as expected. So busy loop it is. */
+        while(!image_ready);
+        image_ready = false;
+        /** Use uint32_t to load faster */
+        uint32_t* pixels = (uint32_t*)(app.cdc_buffer + COLOR_PALETTE_SIZE * sizeof(uint16_t));
+        /** @todo display image */
+        (void)pixels;
     }
+}
+
+uint8_t* __attribute__((section(".ramcode"))) cdc_hook_reset_rx_buffer()
+{
+    app.write_offset = 0;
+    return app.cdc_buffer;
+}
+
+
+uint8_t* __attribute__((section(".ramcode"))) cdc_hook_on_data(int len)
+{
+    app.write_offset += len;
+    if (app.write_offset >= IMAGE_SIZE)
+    {
+        /** copy the color pallete to avoid overwritten */
+        memcpy(app.color_palette, app.cdc_buffer, sizeof(app.color_palette));
+        /** move the extra data to the top if any */
+        if (app.write_offset > IMAGE_SIZE)
+        {
+            memmove(app.cdc_buffer, app.cdc_buffer + IMAGE_SIZE, app.write_offset - IMAGE_SIZE);
+        }
+        /** Switch buffer */
+        app.write_offset -= IMAGE_SIZE;
+        /** Label image as ready. So when execution resumes on the normal code flow, it can process the image. */
+        image_ready = true;
+    }
+    return app.cdc_buffer + app.write_offset;
 }
