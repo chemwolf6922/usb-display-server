@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include "ch32x035_conf.h"
+#include "../../../common/config.h"
 
 #define PIXEL_BITS 5
 #define IMAGE_WIDTH 160
@@ -38,7 +39,15 @@ typedef struct
 } lcd_t;
 
 void lcd_init(const lcd_t* lcd);
+
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+void lcd_start_image_draw(const lcd_t* lcd);
+void lcd_write_image_data(const lcd_t* lcd, const uint8_t* data, int data_len);
+void lcd_end_image_draw(const lcd_t* lcd);
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
 void lcd_draw_image(
     const lcd_t* lcd,
     const uint8_t* indexs,
     const color_t* palette);
+#endif
+

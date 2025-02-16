@@ -17,16 +17,30 @@
 #include <stdatomic.h>
 #include "ch32x035_usbfs_device.h"
 #include "lcd.h"
+#include "../../../common/config.h"
 
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+/** 5 packet is 1 line */
+#define BUFFER_PACKET_COUNT (5 * 20)
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
 #define BUFFER_PACKET_COUNT (((IMAGE_SIZE + 63) / 64))
+#endif
 
 static volatile atomic_bool image_ready = false;
 
 static struct
 {
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    __attribute__((aligned(4))) uint8_t buffer_A[64 * BUFFER_PACKET_COUNT];
+    __attribute__((aligned(4))) uint8_t buffer_B[64 * BUFFER_PACKET_COUNT];
+    uint8_t* cdc_buffer;
+    int write_offset;
+    int image_bytes_written;
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
     __attribute__((aligned(4))) uint8_t cdc_buffer[64 * BUFFER_PACKET_COUNT];
     int write_offset;
     color_t color_palette[COLOR_PALETTE_SIZE];
+#endif
     lcd_t lcd;
 } app;
 
@@ -42,6 +56,10 @@ int main(void)
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_1);
     SystemCoreClockUpdate();
     systick_init();
+
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    app.cdc_buffer = app.buffer_A;
+#endif
 
     /* Init serial number */
     uint32_t chip_id = DBGMCU_GetCHIPID();
@@ -79,22 +97,50 @@ int main(void)
         /** Well, WFI does not work as expected. So busy loop it is. */
         while(!image_ready);
         image_ready = false;
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+        if (app.image_bytes_written == 0)
+        {
+            lcd_start_image_draw(&app.lcd);
+        }
+        uint8_t* buffer = app.cdc_buffer == app.buffer_A ? app.buffer_B : app.buffer_A;
+        lcd_write_image_data(&app.lcd, buffer, sizeof(app.buffer_A));
+        app.image_bytes_written += sizeof(app.buffer_A);
+        if (app.image_bytes_written == IMAGE_HEIGHT * IMAGE_WIDTH * sizeof(color_t))
+        {
+            lcd_end_image_draw(&app.lcd);
+            app.image_bytes_written = 0;
+        }
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
         lcd_draw_image(
             &app.lcd,
             app.cdc_buffer + sizeof(app.color_palette),
             app.color_palette);
+#endif
     }
 }
 
 uint8_t* __attribute__((section(".ramcode"))) cdc_hook_reset_rx_buffer()
 {
     app.write_offset = 0;
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    app.cdc_buffer = app.buffer_A;
+#endif
     return app.cdc_buffer;
 }
 
 
 uint8_t* __attribute__((section(".ramcode"))) cdc_hook_on_data(int len)
 {
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    app.write_offset += len;
+    if (app.write_offset == sizeof(app.buffer_A))
+    {
+        app.cdc_buffer = app.cdc_buffer == app.buffer_A ? app.buffer_B : app.buffer_A;
+        app.write_offset = 0;
+        image_ready = true;
+    }
+    return app.cdc_buffer + app.write_offset;
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
     app.write_offset += len;
     if (app.write_offset >= IMAGE_SIZE)
     {
@@ -116,4 +162,5 @@ uint8_t* __attribute__((section(".ramcode"))) cdc_hook_on_data(int len)
         image_ready = true;
     }
     return app.cdc_buffer + app.write_offset;
+#endif
 }

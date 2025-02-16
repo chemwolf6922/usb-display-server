@@ -33,6 +33,10 @@ void lcd_init(const lcd_t* lcd)
     }
     /** All gpio and spi are on APB2 */
     RCC_APB2PeriphClockCmd(rcc_flag, ENABLE);
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    /** DMA */
+    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA1, ENABLE);
+#endif
     /** Init gpio */
     GPIO_InitTypeDef gpio_init = {0};
     /** NCS */
@@ -75,7 +79,29 @@ void lcd_init(const lcd_t* lcd)
     spi_init.SPI_FirstBit = SPI_FirstBit_MSB;
     spi_init.SPI_CRCPolynomial = 7;
     SPI_Init(lcd->spi, &spi_init);
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    /** SPI DMA */
+    SPI_I2S_DMACmd(lcd->spi, SPI_I2S_DMAReq_Tx, ENABLE);
+#endif
     SPI_Cmd(lcd->spi, ENABLE);
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    /** DMA */
+    DMA_InitTypeDef dma_init = {0};
+    DMA_DeInit(DMA1_Channel3);
+    dma_init.DMA_PeripheralBaseAddr = (uint32_t)&lcd->spi->DATAR;
+    dma_init.DMA_MemoryBaseAddr = 0;
+    dma_init.DMA_DIR = DMA_DIR_PeripheralDST;
+    dma_init.DMA_BufferSize = 0;
+    dma_init.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
+    dma_init.DMA_MemoryInc = DMA_MemoryInc_Enable;
+    /** 16b for faster data transmission */
+    dma_init.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
+    dma_init.DMA_MemoryDataSize = DMA_MemoryDataSize_HalfWord;
+    dma_init.DMA_Mode = DMA_Mode_Normal;
+    dma_init.DMA_Priority = DMA_Priority_Low;
+    dma_init.DMA_M2M = DMA_M2M_Disable;
+    DMA_Init(DMA1_Channel3, &dma_init);
+#endif
     /** Init screen */
     lcd_init_screen(lcd);
 }
@@ -174,6 +200,7 @@ do \
 #undef SEND_COMMAND
 }
 
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
 void __attribute__((section(".ramcode"))) lcd_draw_image(
     const lcd_t* lcd,
     const uint8_t* indexes,
@@ -232,4 +259,47 @@ void __attribute__((section(".ramcode"))) lcd_draw_image(
     while (lcd->spi->STATR & SPI_I2S_FLAG_BSY)
     {
     }
+    gpio_set(&lcd->ncs);
 }
+#endif
+
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+void __attribute__((section(".ramcode"))) lcd_start_image_draw(const lcd_t* lcd)
+{
+    gpio_reset(&lcd->ncs);
+    gpio_reset(&lcd->dc);
+    /** Set data size to 8b for the command */
+    lcd->spi->CTLR1 &= (uint16_t)~SPI_DataSize_16b;
+    lcd->spi->DATAR = 0x2C;
+    /** Wait for transmission to fully complete */
+    while (lcd->spi->STATR & SPI_I2S_FLAG_BSY)
+    {
+    }
+    gpio_set(&lcd->dc);
+    /** Set data size to 16b for the data */
+    lcd->spi->CTLR1 |= SPI_DataSize_16b;
+}
+
+void __attribute__((section(".ramcode"))) lcd_write_image_data(
+    const lcd_t* lcd, const uint8_t* data, int data_len)
+{
+    /** Assume the previous dma finished. Otherwise, this will not work. */
+    DMA1_Channel3->MADDR = (uint32_t)data;
+    /** 16b data, half the length */
+    DMA1_Channel3->CNTR = data_len/2;
+    DMA_Cmd(DMA1_Channel3, ENABLE);
+}
+
+void __attribute__((section(".ramcode"))) lcd_end_image_draw(const lcd_t* lcd)
+{
+    /** Wait for dma to finish */
+    while (!(DMA1->INTFR & DMA1_IT_TC3))
+    {
+    }
+    /** Wait for spi to finish */
+    while (lcd->spi->STATR & SPI_I2S_FLAG_BSY)
+    {
+    }
+    gpio_set(&lcd->ncs);
+}
+#endif
