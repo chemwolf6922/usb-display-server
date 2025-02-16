@@ -79,29 +79,7 @@ void lcd_init(const lcd_t* lcd)
     spi_init.SPI_FirstBit = SPI_FirstBit_MSB;
     spi_init.SPI_CRCPolynomial = 7;
     SPI_Init(lcd->spi, &spi_init);
-#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
-    /** SPI DMA */
-    SPI_I2S_DMACmd(lcd->spi, SPI_I2S_DMAReq_Tx, ENABLE);
-#endif
     SPI_Cmd(lcd->spi, ENABLE);
-#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
-    /** DMA */
-    DMA_InitTypeDef dma_init = {0};
-    DMA_DeInit(DMA1_Channel3);
-    dma_init.DMA_PeripheralBaseAddr = (uint32_t)&lcd->spi->DATAR;
-    dma_init.DMA_MemoryBaseAddr = 0;
-    dma_init.DMA_DIR = DMA_DIR_PeripheralDST;
-    dma_init.DMA_BufferSize = 0;
-    dma_init.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
-    dma_init.DMA_MemoryInc = DMA_MemoryInc_Enable;
-    /** 16b for faster data transmission */
-    dma_init.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
-    dma_init.DMA_MemoryDataSize = DMA_MemoryDataSize_HalfWord;
-    dma_init.DMA_Mode = DMA_Mode_Normal;
-    dma_init.DMA_Priority = DMA_Priority_Low;
-    dma_init.DMA_M2M = DMA_M2M_Disable;
-    DMA_Init(DMA1_Channel3, &dma_init);
-#endif
     /** Init screen */
     lcd_init_screen(lcd);
 }
@@ -283,19 +261,18 @@ void __attribute__((section(".ramcode"))) lcd_start_image_draw(const lcd_t* lcd)
 void __attribute__((section(".ramcode"))) lcd_write_image_data(
     const lcd_t* lcd, const uint8_t* data, int data_len)
 {
-    /** Assume the previous dma finished. Otherwise, this will not work. */
-    DMA1_Channel3->MADDR = (uint32_t)data;
-    /** 16b data, half the length */
-    DMA1_Channel3->CNTR = data_len/2;
-    DMA_Cmd(DMA1_Channel3, ENABLE);
+    uint16_t* pixel = (uint16_t*)data;
+    for (int i = 0; i < data_len/2; i ++)
+    {
+        while (!(lcd->spi->STATR & SPI_I2S_FLAG_TXE))
+        {
+        }
+        lcd->spi->DATAR = pixel[i];
+    }
 }
 
 void __attribute__((section(".ramcode"))) lcd_end_image_draw(const lcd_t* lcd)
 {
-    /** Wait for dma to finish */
-    while (!(DMA1->INTFR & DMA1_IT_TC3))
-    {
-    }
     /** Wait for spi to finish */
     while (lcd->spi->STATR & SPI_I2S_FLAG_BSY)
     {
