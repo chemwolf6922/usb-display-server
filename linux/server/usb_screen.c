@@ -75,6 +75,10 @@ static int usb_screen_write(usb_screen_t* base, const void* data, size_t size)
     {
         return -1;
     }
+    /**
+     * @todo Use non-blocking write.
+     * Need to handle incomplete writes with non-blocking write.
+     */
     ssize_t write_len = write(this->fd, data, size);
     if (write_len == -1)
     {
@@ -87,7 +91,7 @@ static int usb_screen_write(usb_screen_t* base, const void* data, size_t size)
 
 static void try_open_device(usb_screen_impl_t* this)
 {
-    int flags = O_RDWR | O_NOCTTY | O_NONBLOCK;
+    int flags = O_RDWR | O_NOCTTY;
     this->fd = open(this->device_path, flags);
     if (this->fd < 0)
     {

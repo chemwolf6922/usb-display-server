@@ -57,6 +57,19 @@ typedef struct
     size_t size;
 } packed_color_palette_image_t;
 
+typedef struct
+{
+    uint16_t b : 5;
+    uint16_t g : 6;
+    uint16_t r : 5;
+} __attribute__((packed)) rgb565_pixel_t;
+
+typedef struct
+{
+    rgb565_pixel_t* pixels;
+    size_t size;
+} rgb565_image_t;
+
 image_t* image_new(size_t width, size_t height);
 void image_free(image_t* image);
 
@@ -69,6 +82,11 @@ packed_color_palette_image_t* packed_color_palette_image_new(int k, int width, i
 void packed_color_palette_image_free(packed_color_palette_image_t* image);
 
 int pack_color_palette_image(const color_palette_image_t* src, packed_color_palette_image_t* dst);
+
+rgb565_image_t* rgb565_image_new(size_t size);
+void rgb565_image_free(rgb565_image_t* image);
+
+int bgr_image_to_rgb565(const image_t* src, rgb565_image_t* dst);
 
 #ifdef __cplusplus
 }

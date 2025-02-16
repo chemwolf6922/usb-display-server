@@ -181,3 +181,49 @@ int pack_color_palette_image(const color_palette_image_t* src, packed_color_pale
     }
     return 0;
 }
+
+rgb565_image_t* rgb565_image_new(size_t size)
+{
+    rgb565_image_t* image = malloc(sizeof(rgb565_image_t));
+    if (!image)
+    {
+        return NULL;
+    }
+    image->size = size;
+    image->pixels = malloc(size * sizeof(rgb565_pixel_t));
+    if (!image->pixels)
+    {
+        free(image);
+        return NULL;
+    }
+    return image;
+}
+
+void rgb565_image_free(rgb565_image_t* image)
+{
+    if (image)
+    {
+        if (image->pixels)
+            free(image->pixels);
+        free(image);
+    }
+}
+
+int bgr_image_to_rgb565(const image_t* src, rgb565_image_t* dst)
+{
+    if (!src || !dst)
+    {
+        return -1;
+    }
+    if (src->width * src->height != dst->size)
+    {
+        return -1;
+    }
+    for (size_t i = 0; i < src->width * src->height; i++)
+    {
+        dst->pixels[i].r = src->pixels[i].bgr.r >> 3;
+        dst->pixels[i].g = src->pixels[i].bgr.g >> 2;
+        dst->pixels[i].b = src->pixels[i].bgr.b >> 3;
+    }
+    return 0;
+}

@@ -19,6 +19,7 @@
 #include "../../common/k_means_compression.h"
 #include "../../common/image.h"
 #include "../../common/color_conversion.h"
+#include "../../common/config.h"
 
 typedef struct
 {
@@ -36,8 +37,12 @@ typedef struct
     tev_timeout_handle_t frame_sync;
     uint64_t last_frame_time_ms;
     image_t* image;
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    rgb565_image_t* rgb565_image;
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
     color_palette_image_t* compressed_image;
     packed_color_palette_image_t* packed_image;
+#endif
     bool first_frame;
 } app_t;
 
@@ -91,6 +96,15 @@ int main(int argc, char* const* argv)
         fprintf(stderr, "Failed to create image\n");
         return 1;
     }
+
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    app.rgb565_image = rgb565_image_new(CONST_SCREEN_WIDTH * CONST_SCREEN_HEIGHT);
+    if (!app.rgb565_image)
+    {
+        fprintf(stderr, "Failed to create rgb565 image\n");
+        return 1;
+    }
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
     app.compressed_image = color_palette_image_new(CONST_N_COLOR, CONST_SCREEN_WIDTH, CONST_SCREEN_HEIGHT);
     if (!app.compressed_image)
     {
@@ -103,6 +117,7 @@ int main(int argc, char* const* argv)
         fprintf(stderr, "Failed to create packed image\n");
         return 1;
     }
+#endif
 
     app.fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (app.fd == -1)
@@ -156,8 +171,12 @@ int main(int argc, char* const* argv)
     close(app.fd);
     app.screen->close(app.screen);
     image_free(app.image);
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    rgb565_image_free(app.rgb565_image);
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
     color_palette_image_free(app.compressed_image);
     packed_color_palette_image_free(app.packed_image);
+#endif
     map_delete(app.clients, NULL, NULL);
 
     /* code */
@@ -256,6 +275,11 @@ static void process_frame(void* )
     }
 
     app.last_frame_time_ms = now_ms();
+#if FRAME_COMPRESSION == FRAME_COMPRESSION_NONE
+    bgr_image_to_rgb565(app.image, app.rgb565_image);
+    /** DO not care if this fails */
+    app.screen->write(app.screen, app.rgb565_image->pixels, app.rgb565_image->size * sizeof(rgb565_pixel_t));
+#elif FRAME_COMPRESSION == FRAME_COMPRESSION_K_MEANS
     bgr_image_to_ycbcr(app.image, app.image);
     /** compress image, this can be time consuming */
     if (k_means_compression(app.image, CONST_N_COLOR, app.compressed_image, !app.first_frame) < 0)
@@ -270,6 +294,8 @@ static void process_frame(void* )
     memcpy(app.compressed_image->color_palettes, color_palette, sizeof(color_palette));
     /** DO not care if this fails */
     app.screen->write(app.screen, app.packed_image->data, app.packed_image->size);
+#endif
+
     app.first_frame = false;
 }
 
